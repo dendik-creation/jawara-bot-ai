@@ -1,0 +1,1 @@
+Example Detail Task

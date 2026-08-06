@@ -1,0 +1,231 @@
+{
+  "main": {
+    "id": "af5c3c956729338e",
+    "type": "split",
+    "children": [
+      {
+        "id": "ecc7a183e23156b7",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9acfeb7dc92b3671",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "02_Architecture/03_Tech_Stack.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "03_Tech_Stack"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "67efe603a339b2fb",
+    "type": "split",
+    "children": [
+      {
+        "id": "fd43689ff7016bdb",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7a08c22e4a7d2bcc",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "fb28cf855be54e4d",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "3535ddda4c1168ab",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 295.5
+  },
+  "right": {
+    "id": "5f4fa52d01388772",
+    "type": "split",
+    "children": [
+      {
+        "id": "3ae781a2a7a0113b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3bf05a83f2fbdf4a",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "8496fd2512ad0721",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "00_Index.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "13a64bbbe2ff83de",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "70d685df48949b5b",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "70f761c932185b42",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ],
+        "currentTab": 3
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "graph:Open graph view": false,
+      "switcher:Open quick switcher": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "bases:Create new base": false,
+      "command-palette:Open command palette": false,
+      "obsidian-kanban:Create new board": false
+    }
+  },
+  "active": "9acfeb7dc92b3671",
+  "lastOpenFiles": [
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.dcc7421be76a",
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.06fd02632400",
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.25e817b28d91",
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.1931e8a273cd",
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.6d34cbb97d91",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.b0459919f6f1",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.37a0d9232d8d",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.c285df4ea9ff",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.768dd6fdb97e",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.15f177cec652",
+    "02_Architecture/03_Tech_Stack.md.tmp.11132.3a310deeb6a7",
+    "05_Audit/02_Architecture_Audit_ML_Decoupling.md",
+    "02_Architecture/01_System_Architecture.md",
+    "00_Index.md",
+    "01_Overview/01_Problem_Statement.md",
+    "06_Tasks/TASKS.md",
+    "06_Tasks/Task_Detail/Setup Docker Environment.md",
+    "06_Tasks/Task_Detail/Build Intent Router.md",
+    "02_Architecture/03_Tech_Stack.md",
+    "01_Overview/04_How_it_Works.md",
+    "01_Overview/02_Value_Proposition.md",
+    "02_Architecture/02_Data_Pipeline.md",
+    "01_Overview/03_Pitching_Narrative.md",
+    "06_Tasks/Task_Detail/Build Text Verification Pipeline.md",
+    "06_Tasks/Task_Detail/Design PostgreSQL Schema.md",
+    "06_Tasks/Task_Detail/Implement FastAPI Gateway.md",
+    "06_Tasks/Task_Detail/Integrate Safe Browsing.md",
+    "06_Tasks/Untitled Kanban.md",
+    "06_Tasks/Task_Detail/Integrate VirusTotal.md",
+    "06_Tasks/Task_Detail/Generate LLM Responses.md",
+    "06_Tasks/Task_Detail/Create Audit Logging.md",
+    "06_Tasks/Task_Detail/Implement Basic Analytics Dashboard.md",
+    "06_Tasks/Task_Detail/Implement WhatsApp Response Sender.md",
+    "06_Tasks/Task_Detail/Implement URL Extractor.md",
+    "06_Tasks/Task_Detail/Implement Text Normalizer.md",
+    "06_Tasks/Task_Detail/Create Qdrant Collection.md",
+    "Untitled.canvas"
+  ]
+}

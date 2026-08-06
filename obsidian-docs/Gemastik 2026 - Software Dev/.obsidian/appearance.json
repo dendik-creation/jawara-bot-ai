@@ -1,0 +1,10 @@
+{
+  "theme": "system",
+  "accentColor": "#7d3687",
+  "cssTheme": "Atom",
+  "interfaceFontFamily": "Space Grotesk",
+  "textFontFamily": "Space Grotesk",
+  "monospaceFontFamily": "JetBrains Mono",
+  "showRibbon": false,
+  "showViewHeader": true
+}

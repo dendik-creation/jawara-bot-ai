@@ -1,0 +1,9 @@
+{
+  "extensions": [
+    "mermaid",
+    "mmd"
+  ],
+  "splitLayout": "editor-left",
+  "pngScale": 1,
+  "pngBackground": "theme"
+}

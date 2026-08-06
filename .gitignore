@@ -1,0 +1,59 @@
+# === Backend (Python / FastAPI) ===
+__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+wheels/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# === Frontend (Next.js) ===
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/coverage/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.pnp
+frontend/.pnp.*
+
+# === ML Service (future) ===
+ml-service/__pycache__/
+ml-service/.venv/
+ml-service/models/*.bin
+ml-service/models/*.pt
+ml-service/models/*.onnx
+
+# === Obsidian docs ===
+obsidian-docs/**/.obsidian/workspace.json
+obsidian-docs/**/.obsidian/workspace-mobile.json
+obsidian-docs/**/.obsidian/cache
+
+# === Env / secrets ===
+.env
+.env.*
+!.env.example
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
+
+# === Logs / temp ===
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp

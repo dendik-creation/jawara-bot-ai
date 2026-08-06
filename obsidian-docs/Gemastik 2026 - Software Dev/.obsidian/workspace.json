@@ -4,28 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "3e26986ece660daa",
+        "id": "affdf50ce744baa9",
         "type": "tabs",
         "children": [
           {
-            "id": "0318e5fe1ec401bf",
+            "id": "01be0005ae9c1f32",
             "type": "leaf",
             "state": {
-              "type": "kanban",
-              "state": {
-                "file": "06_Tasks/TASKS.md",
-                "kanbanViewState": {
-                  "kanban-plugin": "board",
-                  "list-collapse": [
-                    false,
-                    false,
-                    false,
-                    false
-                  ]
-                }
-              },
-              "icon": "lucide-trello",
-              "title": "TASKS"
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -195,43 +184,44 @@
       "obsidian-kanban:Create new board": false
     }
   },
-  "active": "0318e5fe1ec401bf",
+  "active": "01be0005ae9c1f32",
   "lastOpenFiles": [
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.4d636e4b1da1",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.c04bd459bc0c",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.c2768b28768e",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.0d30b3217c96",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.bfc8f5bd2f44",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.4352e7116485",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.730d86603ebd",
+    "01_Overview/04_How_it_Works.md",
+    "02_Architecture/02_Data_Pipeline.md",
+    "07_How_to_Run/01_Dev_Environtment.md",
+    "07_How_to_Run/02_Prod_Environtment.md",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.062a10dc77a2",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.90042edb3fed",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.c9bd033d71e9",
+    "00_Index.md",
+    "00_Index.md.tmp.14580.198d642cb601",
+    "Untitled.md",
+    "06_Tasks/TASKS.md",
+    "06_Tasks/Task_Detail/Implement FastAPI Gateway.md",
+    "06_Tasks/Task_Detail/Build Text Verification Pipeline.md",
+    "06_Tasks/Task_Detail/Configure WAHA.md",
+    "06_Tasks/Task_Detail/Create Audit Logging.md",
+    "06_Tasks/Task_Detail/Create Qdrant Collection.md",
+    "06_Tasks/Task_Detail/Setup Docker Environment.md",
     "02_Architecture/03_Tech_Stack.md",
-    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.dcc7421be76a",
-    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.06fd02632400",
-    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.25e817b28d91",
-    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.1931e8a273cd",
-    "05_Audit/02_Architecture_Audit_ML_Decoupling.md.tmp.11132.6d34cbb97d91",
-    "02_Architecture/03_Tech_Stack.md.tmp.11132.b0459919f6f1",
-    "02_Architecture/03_Tech_Stack.md.tmp.11132.37a0d9232d8d",
-    "02_Architecture/03_Tech_Stack.md.tmp.11132.c285df4ea9ff",
-    "02_Architecture/03_Tech_Stack.md.tmp.11132.768dd6fdb97e",
-    "02_Architecture/03_Tech_Stack.md.tmp.11132.15f177cec652",
     "05_Audit/02_Architecture_Audit_ML_Decoupling.md",
     "02_Architecture/01_System_Architecture.md",
-    "00_Index.md",
     "01_Overview/01_Problem_Statement.md",
-    "06_Tasks/TASKS.md",
-    "06_Tasks/Task_Detail/Setup Docker Environment.md",
     "06_Tasks/Task_Detail/Build Intent Router.md",
-    "01_Overview/04_How_it_Works.md",
     "01_Overview/02_Value_Proposition.md",
-    "02_Architecture/02_Data_Pipeline.md",
     "01_Overview/03_Pitching_Narrative.md",
-    "06_Tasks/Task_Detail/Build Text Verification Pipeline.md",
     "06_Tasks/Task_Detail/Design PostgreSQL Schema.md",
-    "06_Tasks/Task_Detail/Implement FastAPI Gateway.md",
     "06_Tasks/Task_Detail/Integrate Safe Browsing.md",
     "06_Tasks/Untitled Kanban.md",
     "06_Tasks/Task_Detail/Integrate VirusTotal.md",
     "06_Tasks/Task_Detail/Generate LLM Responses.md",
-    "06_Tasks/Task_Detail/Create Audit Logging.md",
-    "06_Tasks/Task_Detail/Implement Basic Analytics Dashboard.md",
-    "06_Tasks/Task_Detail/Implement WhatsApp Response Sender.md",
-    "06_Tasks/Task_Detail/Implement URL Extractor.md",
-    "06_Tasks/Task_Detail/Implement Text Normalizer.md",
-    "06_Tasks/Task_Detail/Create Qdrant Collection.md",
     "Untitled.canvas"
   ]
 }

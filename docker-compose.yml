@@ -1,16 +1,17 @@
+name: "jawara-bot-ai"
 services:
   waha:
     image: devlikeapro/waha:latest
     container_name: jawara-waha
     restart: always
     ports:
-      - "3000:3000"
+      - "${WAHA_PORT}:3000"
     environment:
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME}
       - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD}
       - WAHA_API_KEY=${WAHA_API_KEY}
       - WHATSAPP_HOOK_URL=http://api-gateway:8000/api/v1/webhook
-      - WHATSAPP_HOOK_EVENTS=message,message.any
+      - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
     volumes:
       - waha_sessions:/app/.sessions
     networks:
@@ -27,7 +28,7 @@ services:
     container_name: jawara-gateway
     restart: always
     ports:
-      - "8000:8000"
+      - "${API_GATEWAY_PORT}:8000"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - QDRANT_HOST=qdrant
@@ -81,6 +82,8 @@ services:
     image: postgres:16-alpine
     container_name: jawara-postgres
     restart: always
+    ports:
+      - "${POSTGRES_PORT}:5432"
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
@@ -101,7 +104,7 @@ services:
     container_name: jawara-qdrant
     restart: always
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
@@ -114,9 +117,11 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:7-alpine
     container_name: jawara-redis
     restart: always
+    ports:
+      - "${REDIS_PORT}:6379"
     networks:
       - jawara-net
     healthcheck:
@@ -131,7 +136,7 @@ services:
     container_name: jawara-dashboard
     restart: always
     ports:
-      - "3001:3000"
+      - "${FRONTEND_PORT}:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     depends_on:

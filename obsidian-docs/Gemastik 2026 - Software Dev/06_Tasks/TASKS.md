@@ -6,8 +6,6 @@ kanban-plugin: board
 
 ## ToDo
 
-- [ ] [[Configure WAHA]] @{2026-08-06}
-- [ ] [[Implement FastAPI Gateway]] @{2026-08-07}
 - [ ] [[Create Redis Queue]] @{2026-08-07}
 - [ ] [[Implement Celery Workers]] @{2026-08-07}
 - [ ] [[Design PostgreSQL Schema]] @{2026-08-07}
@@ -35,6 +33,8 @@ kanban-plugin: board
 ## Done
 
 - [x] [[Setup Docker Environment]] @{2026-08-06}
+- [x] [[Configure WAHA]] @{2026-08-06}
+- [x] [[Implement FastAPI Gateway]] @{2026-08-07}
 
 
 

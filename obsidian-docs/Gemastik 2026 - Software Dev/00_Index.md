@@ -34,6 +34,10 @@
 ### 06. Sprint Board
 - [[TASKS|Sprint Kanban Board]] — *Engineering task board (To Do / In Progress / Revision / Finished) derived from the full vault, sequenced by implementation dependency.*
 
+### 07. How to Run
+- [[01_Dev_Environtment|01. Development Environment]] — *Hybrid run: WAHA/Postgres/Redis/Qdrant via Docker Compose, backend & frontend via local CLI.*
+- [[02_Prod_Environtment|02. Production Environment]] — *Full Docker Compose deploy (all 7 services), WAHA pairing, backup, security notes.*
+
 ---
 
 ## Ringkasan Arsitektur Singkat

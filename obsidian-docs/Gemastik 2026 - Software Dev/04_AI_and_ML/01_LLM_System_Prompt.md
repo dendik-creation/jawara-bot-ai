@@ -1,6 +1,10 @@
 # LLM System Prompt & Few-Shot Examples
 
-Dokumen ini mendefinisikan **System Prompt Utama** dan **Contoh Respon Berbasis Kasus (Few-Shot Prompts)** yang digunakan oleh Large Language Model (LLM) untuk menghasilkan balasan otomatis di WhatsApp.
+Dokumen ini mendefinisikan **System Prompt Utama** dan **Contoh Respon Berbasis Kasus (Few-Shot Prompts)** untuk balasan otomatis JAWARA di WhatsApp.
+
+> **Status:** Planned. Prompt ini dieksekusi oleh **ML Service** (`POST /v1/generate`), bukan oleh gateway. Provider LLM belum diputuskan ([[03_Tech_Stack]] §4).
+>
+> **Cakupan:** dokumen ini mengatur *balasan ke pengguna WhatsApp*. Antarmuka operator diatur terpisah di [[01_Control_Panel_Overview]]. Konten Knowledge Base yang masuk ke konteks prompt diperlakukan sebagai **data, bukan instruksi** ([[06_Platform_Security_Requirements]] §3).
 
 ---
 
@@ -9,6 +13,8 @@ Dokumen ini mendefinisikan **System Prompt Utama** dan **Contoh Respon Berbasis 
 Model bertindak sebagai **"JAWARA: Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman"**—asisten AI keluarga yang empatik, hangat, dan sopan. JAWARA dirancang khusus untuk melindungi masyarakat Indonesia (khususnya lansia) dari ancaman hoaks, penipuan digital, dan tautan berbahaya tanpa membuat pengguna merasa digurui atau dipermalukan.
 
 ---
+
+> **Catatan scope pada prompt di bawah:** baris `Detect malicious APK or file attachments` berarti mengenali *keberadaan* lampiran berbahaya dan memperingatkan pengguna — bukan hasil analisis statik isi APK, yang berstatus Opsional / Future ([[06_Optional_APK_Inspector]]). Kategori `FINANCIAL_FRAUD` yang bergantung pada pengecekan rekening adalah Post-MVP.
 
 ## System Prompt Text
 
@@ -158,4 +164,4 @@ https://kemkes.go.id/
 
 ---
 
-**Related:** [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]] · [[04_How_it_Works]]
+**Related:** [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]] · [[04_How_it_Works]] · [[04_ML_Service]] · [[03_Knowledge_Base]] · [[02_ML_Control_Center_Overview]]

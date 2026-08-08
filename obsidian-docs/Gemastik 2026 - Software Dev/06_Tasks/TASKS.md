@@ -15,7 +15,7 @@ kanban-plugin: board
 - [ ] [[Generate LLM Responses]] @{2026-08-10}
 - [ ] [[Implement WhatsApp Response Sender]] @{2026-08-10}
 - [ ] [[Create Audit Logging]] @{2026-08-10}
-- [ ] [[Implement Basic Analytics Dashboard]] @{2026-08-10}
+- [ ] [[Implement Command Center Dashboard]] @{2026-08-10}
 
 
 ## Progress

@@ -2,6 +2,8 @@
 
 Panduan deploy penuh: semua 7 service (`waha`, `api-gateway`, `celery-worker`, `postgres`, `qdrant`, `redis`, `frontend-dashboard`) jalan sebagai container, orchestrated oleh `docker-compose.yml` di root repo.
 
+> `ml-service` belum ada. Ketika ditambahkan, service itu punya Dockerfile, healthcheck berbasis readiness, dan skala sendiri — serta **tidak boleh** dipublish ke internet ([[04_ML_Service]], [[06_Platform_Security_Requirements]]).
+
 ---
 
 ## 1. Prerequisites
@@ -136,7 +138,8 @@ docker image prune -f   # buang image lama yang menganggur
 - `WAHA_API_KEY` adalah satu-satunya auth layer webhook (`X-Api-Key`) — rotate berkala, jangan reuse across environment.
 - Rate-limiting webhook sudah live: **20 request / 60 detik per (session, chat_id)**, sliding window di Redis, balas `429` + `Retry-After`. Catatan operasional: limiter ini **fail open** — kalau Redis tidak reachable, request tetap diteruskan dan kegagalannya di-log. Rate limit reverse-proxy tetap layak dipasang sebagai lapisan kedua, khususnya untuk trafik yang belum lolos auth `X-Api-Key`.
 - `USER_HASH_SALT` adalah satu-satunya hal yang memisahkan `user_hash` dari nomor WhatsApp asli. Bocornya salt + daftar nomor = hash bisa dibalik brute force (ruang nomor telepon kecil). Simpan setara password database, jangan commit, jangan reuse antar environment.
-- `message_logs.extracted_text` menyimpan isi pesan pengguna dalam plaintext dan **belum punya retention policy** (temuan terbuka di [[01_Documentation_Audit_Report]]). Putuskan sebelum tabel ini mulai diisi oleh [[Create Audit Logging]].
+- `message_logs.extracted_text` menyimpan isi pesan pengguna dalam plaintext dan **belum punya retention policy** (isu terbuka, lihat [[01_Threat_Model_and_Data_Protection]] §5.1). Putuskan sebelum tabel ini mulai diisi oleh [[Create Audit Logging]].
+- Persyaratan keamanan lintas komponen (auth, RBAC, validasi upload, service-to-service auth, secret management) ada di [[06_Platform_Security_Requirements]].
 
 ---
 

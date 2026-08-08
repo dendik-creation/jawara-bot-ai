@@ -1,6 +1,14 @@
 # Vector Database Schema & Config (Qdrant)
 
-Knowledge base menyimpan *vector embedding* dari dokumen klaim dan fakta terverifikasi di dalam **Vector Database (Qdrant)** untuk mendukung proses **Semantic Search RAG**.
+Qdrant menangani **vector-based retrieval dan kemampuan semantic knowledge**: document embedding, knowledge chunk, semantic search, similarity retrieval, dan retrieval untuk RAG.
+
+Batasan peran:
+
+- Qdrant **bukan** database relasional utama. Metadata knowledge (judul dokumen, sumber, pengunggah, status review, versi) tinggal di PostgreSQL ([[01_PostgreSQL_Schema]]).
+- Akses retrieval berada di belakang **ML Service**; gateway tidak menghitung atau membandingkan embedding sendiri ([[04_ML_Service]] §5).
+- Isi Knowledge Base tidak mengubah parameter model ([[03_Knowledge_Base]]).
+
+**Status:** collection `fact_knowledge_base` dan payload index-nya sudah dibuat oleh `backend/app/vector/qdrant_setup.py`. Belum ada embedding yang diisi, dan pipeline ingestion dokumen masih Planned.
 
 ---
 
@@ -116,4 +124,4 @@ Tanpa index, Qdrant melakukan full payload scan tiap query — persis yang membu
 
 ---
 
-**Related:** [[02_Data_Pipeline]] · [[01_PostgreSQL_Schema]] · [[01_LLM_System_Prompt]] · [[Create Qdrant Collection]]
+**Related:** [[02_Data_Pipeline]] · [[01_PostgreSQL_Schema]] · [[01_LLM_System_Prompt]] · [[Create Qdrant Collection]] · [[03_Knowledge_Base]] · [[04_ML_Service]]

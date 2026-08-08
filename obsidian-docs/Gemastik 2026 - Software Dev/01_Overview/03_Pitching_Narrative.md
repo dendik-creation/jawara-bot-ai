@@ -13,6 +13,10 @@
 
 ---
 
+> **Catatan scope untuk pitch di atas:** verifikasi klaim, pemindaian tautan, dan deteksi lampiran `.apk` berada di scope MVP. **Analisis statik isi APK** adalah Opsional / Future ([[06_Optional_APK_Inspector]]) dan **pengecekan nomor rekening penipu** adalah Post-MVP. Sesuaikan kalimat pitch dengan status yang berlaku saat presentasi — lihat [[05_Product_Scope_and_Roadmap]].
+
+---
+
 ## 2. Framing Problem-Solution Fit
 
 ```
@@ -45,6 +49,8 @@
 
 ## 3. Strategi Integrasi & Model Dampak B2G (Business-to-Government)
 
+> **Scope:** Post-MVP. Keduanya adalah potensi arah produk, **bukan** bagian rilis pertama dan belum diimplementasikan. Heatmap spasial butuh field wilayah pada data model dan keputusan privasi yang belum diambil. Lihat [[05_Product_Scope_and_Roadmap]].
+
 Selain melayani masyarakat secara mandiri (self-hosted via WAHA WhatsApp API), JAWARA dirancang dengan potensi **B2G (Government / Public Health Dashboard)**:
 
 1. **Spatial Early Warning System:**
@@ -62,6 +68,8 @@ Selain melayani masyarakat secara mandiri (self-hosted via WAHA WhatsApp API), J
 - **User Retention & Forward Rate:** $\ge 60\%$ draf balasan (`> ...`) yang dihasilkan AI berhasil di-copy/forward oleh pengguna ke grup lain.
 - **Safety Violation Rate:** $0\%$ insiden *hallucination* pada isu medis/kesehatan (dikunci oleh strict RAG guardrails).
 
+> **KPI di atas adalah target, bukan hasil pengukuran.** Metodologi pengukurannya (dataset uji tetap, kadensi evaluasi, siapa yang memvalidasi) belum ditetapkan — kerangka metriknya ada di [[06_Model_Evaluation]], nilai ambangnya masih terbuka.
+
 ---
 
-**Related:** [[01_Problem_Statement]] · [[02_Value_Proposition]] · [[04_How_it_Works]]
+**Related:** [[01_Problem_Statement]] · [[02_Value_Proposition]] · [[04_How_it_Works]] · [[05_Product_Scope_and_Roadmap]] · [[06_Model_Evaluation]]

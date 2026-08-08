@@ -1,34 +1,39 @@
 # Spesifikasi Tech Stack & Deployment
 
-Dokumen ini memuat Rincian Spesifikasi Teknologi yang digunakan dalam membangun platform **JAWARA: Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman (Smart Family Guard)** berarsitektur **WAHA WhatsApp HTTP API Self-Hosted** beserta pertimbangan teknis pemilihan stack.
+Dokumen ini memuat Rincian Spesifikasi Teknologi platform **JAWARA — Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman** beserta pertimbangan teknis pemilihan stack.
 
 ---
 
 ## 1. Tabel Matriks Tech Stack
 
-| Layer / Komponen        | Teknologi Terpilih                        | Versi                      | Alasan Pemilihan & Keunggulan Utama                                                                                                                   |
-| :---------------------- | :---------------------------------------- | :------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Messaging Engine**    | **WAHA (WhatsApp HTTP API)**              | `devlikeapro/waha:latest`  | Engine WhatsApp self-hosted berbasis Docker. Menyediakan REST API lokal, WebSocket/Webhook event, bebas biaya per-pesan, dan kontrol penuh atas sesi. |
-| **Backend Framework**   | **Python (FastAPI)**                      | `0.110+`                   | Dukungan async native (ASGI) yang sangat cepat, integrasi mudah dengan library AI/ML Python, dan otogenerasi OpenAPI spec.                            |
-| **Task Queue & Broker** | **Redis + Celery**                        | `Redis 7.2` / `Celery 5.3` | Mencegah timeout pada webhook WAHA dengan mengalihkan pemrosesan berat (OCR/LLM) ke antrean async worker.                                             |
-| **Relational Database** | **PostgreSQL**                            | `16.x`                     | Database relational yang andal untuk audit log anonim, metadata fakta, serta indeks b-tree/hash yang efisien.                                         |
-| **Vector Database**     | **Qdrant**                                | `1.8+`                     | Vector DB yang sangat ringan, cepat, hemat memori, mendukung *HNSW indexing*, payload filtering, dan sangat Docker-friendly.                          |
-| **RAG Framework**       | **LlamaIndex**                            | `0.10+`                    | Framework RAG terdepan untuk indexing dokumen, prompt orchestration, dan integrasi mulus dengan Qdrant DB.                                            |
-| **Embedding Model**     | **`text-embedding-3-small` / `IndoBERT`** | -                          | Presisi tinggi dalam memahami konteks semantik dan struktur kalimat Bahasa Indonesia.                                                                 |
-| **OCR Engine**          | **EasyOCR / Tesseract**                   | `1.7+`                     | Mampu menguraikan teks tulisan pada flyer, infografis, dan tangkapan layar percakapan dalam Bahasa Indonesia.                                         |
-| **LLM Engine**          | **OpenAI GPT-4o-mini / Claude 3.5 Haiku** | -                          | Latensi sangat rendah (< 1 detik), biaya terjangkau, dan sangat patuh terhadap batasan System Prompt.                                                 |
-| **Frontend Dashboard**  | **Next.js (App Router) + ShadcnUI**       | `14.2+` / `v4`             | Framework React modern untuk visualisasi dashboard analitik B2G / instansi pemerintah secara responsif.                                               |
+Kolom **Status** mengikuti kosakata di [[05_Product_Scope_and_Roadmap]] §2.
+
+| Layer / Komponen        | Teknologi Terpilih                        | Versi                      | Status | Alasan Pemilihan & Keunggulan Utama                                                                                                                   |
+| :---------------------- | :---------------------------------------- | :------------------------- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **WhatsApp Integration**| **WAHA (WhatsApp HTTP API)**              | `devlikeapro/waha:latest`  | Implemented | Engine WhatsApp self-hosted berbasis Docker. Menyediakan REST API lokal, webhook event, bebas biaya per-pesan, dan kontrol penuh atas sesi. |
+| **API Gateway**         | **Python (FastAPI)**                      | `0.110+`                   | Partial | Async native (ASGI), integrasi mudah dengan ekosistem Python, otogenerasi OpenAPI spec. Berperan sebagai gateway API, bukan tempat kode ML. |
+| **Task Queue & Broker** | **Redis + Celery**                        | `Redis 7.2` / `Celery 5.3` | Implemented | Mencegah timeout webhook WAHA dengan mengalihkan pemrosesan berat ke antrean async worker. Redis juga dipakai untuk rate limiting dan cache. |
+| **Relational Database** | **PostgreSQL**                            | `16.x`                     | Partial | Sistem pencatatan relasional utama: users, threats, incidents, policies, audit, metadata AI/ML ([[01_PostgreSQL_Schema]]).                  |
+| **Vector Database**     | **Qdrant**                                | `1.8+`                     | Partial | Retrieval vektor untuk Knowledge Base/RAG. HNSW indexing, payload filtering, Docker-friendly ([[02_VectorDB_Specifications]]).              |
+| **ML Service**          | **FastAPI (proses terpisah)**             | -                          | Planned | Service standalone untuk inference, embedding, OCR, training, evaluasi. Direktori `ml-service/` belum ada ([[04_ML_Service]]).              |
+| **RAG Framework**       | **LlamaIndex**                            | `0.10+`                    | Planned | Indexing dokumen, orkestrasi prompt, integrasi Qdrant. Berjalan **di dalam ML Service**, bukan di gateway.                                   |
+| **Embedding Model**     | **`text-embedding-3-small` / `IndoBERT`** | -                          | Planned | Konteks semantik Bahasa Indonesia. Dimensi vektor adalah config (`EMBEDDING_DIM`): 1536 / 768.                                              |
+| **OCR Engine**          | **EasyOCR / Tesseract**                   | `1.7+`                     | Planned | Ekstraksi teks flyer/infografis/tangkapan layar. Dimuat sekali per proses ML Service, bukan per request.                                     |
+| **LLM Engine**          | **Belum diputuskan** (kandidat: OpenAI GPT-4o-mini / Claude Haiku) | - | Planned | Keputusan terbuka. Kontrak `/v1/generate` dirancang provider-agnostic agar pergantian provider jadi perubahan internal ML Service saja.      |
+| **Frontend Control Panel** | **Next.js (App Router) + shadcn/ui**   | Next.js 16.x / React 19.x  | Planned | Control Panel operator. Repo saat ini masih scaffold `create-next-app`; belum ada layar produk ([[01_Control_Panel_Overview]]).             |
 
 ---
 
 ## 2. Infrastructure & Containerization Setup
 
-Seluruh layanan dikemas menggunakan **Docker & Docker Compose** dengan menyertakan container **WAHA (WhatsApp HTTP API)**:
+Seluruh layanan dikemas menggunakan **Docker & Docker Compose**. Compose nyata ada di `docker-compose.yml` root repo dengan 7 service: `waha`, `api-gateway`, `celery-worker`, `postgres`, `qdrant`, `redis`, `frontend-dashboard` — semuanya ber-healthcheck dan memakai host port dari `.env`.
+
+`ml-service` **belum ada** di compose. Saat ditambahkan nanti: `build: ./ml-service`, healthcheck berbasis readiness (model sudah dimuat, bukan sekadar proses hidup), restart policy sendiri, dan skala sendiri (`docker compose up --scale ml-service=N`). Lihat [[04_ML_Service]].
+
+Blok di bawah adalah **contoh referensi** (disederhanakan, bukan salinan file nyata). Prosedur menjalankan yang akurat ada di [[01_Dev_Environtment]] dan [[02_Prod_Environtment]].
 
 ```yaml
-# Docker Compose Production Architecture
-version: "3.8"
-
+# Contoh referensi — bukan isi docker-compose.yml yang sebenarnya
 services:
   # WAHA WhatsApp HTTP API Engine (Self-Hosted)
   waha:
@@ -121,12 +126,25 @@ volumes:
 
 ---
 
-## 3. Estimasi Latensi & Batasan Opsional
+## 3. Estimasi Latensi & Pertimbangan Biaya
 
 * **Local WAHA Webhook Target:** $< 50\text{ ms}$ (WAHA container ke FastAPI Gateway).
-* **End-to-End Latency Target:** $< 3.0\text{ detik}$ (dari pesan dikirim hingga balasan WAHA terkirim).
-* **Cost Efficiency:** Penggunaan WAHA self-hosted menghemat 100% biaya per pesan Meta WhatsApp API, sementara `text-embedding-3-small` dan `GPT-4o-mini` menghemat biaya AI tanpa mengurangi presisi.
+* **Webhook ack:** $< 200\text{ ms}$ — sudah tercapai lewat offload async ke Redis queue.
+* **End-to-End Latency Target:** $< 3.0\text{ detik}$ (dari pesan diterima hingga balasan terkirim). Target ini **belum diukur** karena pipeline deteksi belum lengkap.
+* **Budget timeout per panggilan ML Service** diusulkan di [[04_ML_Service]] §4, dipotong dari anggaran 3 detik di atas.
+* **Cost Efficiency:** WAHA self-hosted menghilangkan biaya per pesan Meta WhatsApp API. Biaya AI bergantung pada keputusan provider LLM yang masih terbuka.
 
 ---
 
-**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]]
+## 4. Keputusan Teknis yang Masih Terbuka
+
+| Keputusan | Dampak |
+| :--- | :--- |
+| Provider LLM | Memblokir finalisasi kontrak `/v1/generate`, walau kontraknya sengaja dirancang provider-agnostic |
+| Toolchain dependency backend (`uv` via `pyproject.toml` vs `pip` via `requirements.txt`) | Dua manifest hidup berdampingan saat ini; akan drift bila hanya satu yang diedit |
+| Transport live activity feed (SSE / WebSocket / polling) | Menentukan perlu tidaknya channel pub/sub Redis tambahan ([[02_Command_Center]]) |
+| Retention policy `message_logs.extracted_text` | Prasyarat privasi sebelum trafik nyata ([[01_Threat_Model_and_Data_Protection]]) |
+
+---
+
+**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]] · [[04_ML_Service]] · [[05_Integrations]] · [[02_Prod_Environtment]]

@@ -1,5 +1,9 @@
 # Masalah & Ruang Lingkup Proyek
 
+> **JAWARA — Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman** adalah *WhatsApp-oriented security platform*: mendeteksi, menganalisis, memantau, dan merespons pesan mencurigakan, penipuan, phishing, social engineering, dan ancaman digital lain di WhatsApp.
+>
+> Platform ini terdiri dari Web Control Panel, FastAPI API Gateway, ML Service standalone, integrasi WhatsApp lewat WAHA, PostgreSQL, Redis, Qdrant, pipeline AI/ML, Knowledge Base, deteksi ancaman & manajemen incident, serta alur operator feedback dan perbaikan model. Lihat [[01_System_Architecture]] dan [[05_Product_Scope_and_Roadmap]].
+
 ## 1. Context & Problem Statement
 
 ### 1.1 Akar Masalah: Disinformasi & Kejahatan Siber di "Dark Social"
@@ -37,7 +41,7 @@ Sistem **JAWARA: Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman** dibangun me
 
 ## 4. Cakupan Informasi & Multi-Threat Domain
 
-Sistem **JAWARA** dirancang untuk menganalisis dan menangani 5 (lima) domain ancaman utama:
+Sistem **JAWARA** dirancang untuk menganalisis dan menangani 5 (lima) domain ancaman utama. Pemetaan ke kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) ada di [[03_Threat_Monitoring]].
 
 1. **Hoaks Kesehatan (Health Misinformation):**
    - Klaim herbal/tanpa tindakan medis untuk penyakit kronis (katarak, kanker, diabetes).
@@ -47,6 +51,7 @@ Sistem **JAWARA** dirancang untuk menganalisis dan menangani 5 (lima) domain anc
    - Pengecekan nomor rekening/e-wallet penipu yang terintegrasi dengan basis data kejahatan finansial.
 3. **Malicious File & Malware Installation (`.APK` Scams):**
    - File aplikasi Android berbahaya yang menyamar sebagai dokumen foto (`.apk`), undangan pernikahan, bukti resi kurir, atau surat tilang elektronik.
+   - *Scope MVP:* mendeteksi keberadaan lampiran `.apk` dan memberi peringatan. **Analisis statik isi APK adalah Opsional / Future** — lihat [[06_Optional_APK_Inspector]].
 4. **Phishing & Credential Harvesting Links:**
    - Link tautan yang meniru situs web resmi perbankan, portal bansos pemerintah, atau promo kuota internet.
 5. **Isu Publik & Berita Disinformasi Umum:**
@@ -54,4 +59,4 @@ Sistem **JAWARA** dirancang untuk menganalisis dan menangani 5 (lima) domain anc
 
 ---
 
-**Related:** [[02_Value_Proposition]] · [[03_Pitching_Narrative]] · [[01_System_Architecture]]
+**Related:** [[02_Value_Proposition]] · [[03_Pitching_Narrative]] · [[01_System_Architecture]] · [[05_Product_Scope_and_Roadmap]] · [[03_Threat_Monitoring]]

@@ -51,3 +51,5 @@ Central dispatch point of the AI pipeline. The full documented taxonomy has 5 ca
 ## Notes
 
 Do not hardcode assumptions that only 3 categories will ever exist — `FINANCIAL_FRAUD` and `FILE_APK` routing is future-sprint work, not out-of-scope permanently.
+
+Scope update: routing `FILE_APK` (mendeteksi lampiran `.apk` dan memperingatkan) tetap masuk MVP, tapi **analisis statik isi APK adalah Opsional / Future** ([[06_Optional_APK_Inspector]]). `FINANCIAL_FRAUD` / CekRekening.id adalah **Post-MVP** ([[05_Product_Scope_and_Roadmap]]). Router juga harus mengakomodasi kategori ancaman Control Panel yang lebih luas (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) — pemetaannya ke `category_enum` masih keputusan terbuka ([[01_PostgreSQL_Schema]] §0).

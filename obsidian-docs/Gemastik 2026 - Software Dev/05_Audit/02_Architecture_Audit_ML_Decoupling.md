@@ -1,5 +1,13 @@
 # Architecture Audit — ML Service Decoupling
 
+> **Status: Historis.** Audit ini adalah rekaman analisis **saat backend masih kosong** (satu file Python, tanpa route, tanpa worker). Kondisi itu sudah berubah: gateway kini punya webhook intake, auth, rate limiter, queue, worker, migrasi PostgreSQL, dan bootstrap Qdrant.
+>
+> **Arsitektur yang berlaku sekarang ada di [[01_System_Architecture]] dan [[04_ML_Service]]** — dokumen ini tidak boleh dibaca sebagai deskripsi keadaan terkini.
+>
+> Yang tetap berlaku dari audit ini: rekomendasi pemisahan ML Service, kontrak REST gateway↔ML (§12), kepemilikan Qdrant oleh ML Service (§8), dan pembedaan readiness vs liveness (§13) — semuanya sudah dipindahkan ke [[04_ML_Service]] sebagai dokumen aktif.
+>
+> Yang sudah usang di dokumen ini: klaim "backend has no code" (§0, §1, §3), rename `cucudigital-*` (sudah selesai), dan urutan build §19 langkah 1–6 yang sebagian sudah dikerjakan.
+
 > Scope: full repo (`backend/`, `frontend/`, `docker-compose.yml`, `obsidian-docs/`). Audit only — no source restructuring applied. Exception: `frontend/Dockerfile` switched npm to bun per explicit request (mechanical, zero risk, not part of the architecture migration itself).
 
 ---

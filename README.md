@@ -25,10 +25,10 @@ Single Git repository, root as the only `.git`. Monorepo, not a multi-repo submo
 | `waha` | Self-hosted WhatsApp HTTP API engine — receives/sends WhatsApp messages |
 | `api-gateway` | FastAPI backend — webhook intake, auth, orchestration |
 | `celery-worker` | Async task processing (OCR, RAG, LLM calls, offloaded from the webhook path) |
-| `postgres` | Relational store — audit logs, fraud blacklist, subscriptions |
-| `qdrant` | Vector DB — RAG fact-knowledge similarity search |
-| `redis` | Celery broker + rate limiting |
-| `frontend-dashboard` | Next.js analytics dashboard |
+| `postgres` | Primary relational store — message logs, fact knowledge metadata, subscriptions (security/AI-ML domains planned) |
+| `qdrant` | Vector DB — knowledge chunks, semantic/RAG retrieval |
+| `redis` | Celery broker + rate limiting + transient state |
+| `frontend-dashboard` | Next.js Control Panel (scaffold only so far) |
 
 ## Development setup
 
@@ -53,4 +53,6 @@ All services have health checks; `api-gateway` and `frontend-dashboard` wait on 
 
 ## Status
 
-Documentation (`obsidian-docs/`) is ahead of code — backend/ML implementation has not started yet. See `obsidian-docs/.../05_Audit/` for the current architecture audit and open decisions (LLM provider, dependency toolchain, security/retention policy) that should be resolved before writing gateway or ML-service code.
+Documentation (`obsidian-docs/`) is ahead of code. What runs today: webhook intake with `X-Api-Key` auth, Redis rate limiting, Redis queue + Celery worker (pipeline stages still empty seams), PostgreSQL migrations, Qdrant collection bootstrap. What does not exist yet: `ml-service/`, the Control Panel screens, and every security/AI-ML domain table.
+
+Feature scope (MVP / Post-MVP / Optional / Deferred) and per-feature implementation status live in `obsidian-docs/.../01_Overview/05_Product_Scope_and_Roadmap.md`. Open decisions: LLM provider, backend dependency toolchain (`uv` vs `pip`), and the retention policy for plaintext message content.

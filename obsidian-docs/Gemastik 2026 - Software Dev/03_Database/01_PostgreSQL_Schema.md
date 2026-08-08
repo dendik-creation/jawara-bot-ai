@@ -1,6 +1,33 @@
 # Relational Database Schema (PostgreSQL)
 
-PostgreSQL 16 digunakan sebagai **System of Record** untuk menyimpan seluruh data operasional, log audit anonim, metadata fakta, pendaftaran grup, dan basis data *blacklist* penipuan yang terintegrasi dengan engine **WAHA (WhatsApp HTTP API)**.
+PostgreSQL 16 adalah **primary persistent relational data store** JAWARA — sistem pencatatan untuk seluruh data operasional platform.
+
+---
+
+## 0. Domain Data & Status
+
+Arsitektur target menempatkan domain berikut di PostgreSQL. Sebagian besar **belum ada tabelnya**; yang ada sekarang hanya schema pipeline pesan generasi pertama (§ERD di bawah).
+
+| Domain data | Status | Catatan |
+| :--- | :--- | :--- |
+| Users, roles, permissions | Planned | Prasyarat auth + RBAC ([[07_Users_and_Risk]]) |
+| WhatsApp sessions | Planned | Metadata sesi; state hidupnya tetap milik WAHA |
+| Threats | Planned | [[03_Threat_Monitoring]] |
+| Message metadata | Partial | `message_logs` sudah ada |
+| Incidents | Planned | [[05_Incident_Management]] |
+| Alerts | Planned | [[04_Alert_Center]] |
+| Security policies | Planned | [[02_Security_Policies]] |
+| Detection rules | Planned | [[03_Detection_Rules]] |
+| Knowledge metadata | Planned | Vektornya di Qdrant, metadatanya di sini ([[03_Knowledge_Base]]) |
+| Dataset metadata | Planned | [[04_Datasets_and_Operator_Feedback]] |
+| Training jobs | Planned | [[05_Training_Jobs]] |
+| Model metadata | Planned | [[07_Model_Registry_and_Deployment]] |
+| Audit logs (aksi operator) | Planned | Berbeda dari `message_logs` ([[05_Audit_Logs]]) |
+| Operator feedback | Planned | [[04_Datasets_and_Operator_Feedback]] |
+| Fact items / fact sources | Implemented | Basis pengetahuan fakta generasi pertama |
+| User subscriptions | Implemented | Pendaftaran chat/grup, identitas ter-hash |
+
+**Catatan terminologi:** `category_enum` saat ini memuat kategori pipeline generasi pertama (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`). Kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) belum dipetakan ke enum ini — **keputusan terbuka**: perluas enum, ganti dengan tabel referensi, atau pertahankan dua level (intent pipeline vs kategori ancaman).
 
 ---
 
@@ -218,7 +245,7 @@ Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
 
 | Hal | Alasan |
 |---|---|
-| `fraud_blacklists` **tidak** dibuat | Verifikasi penipuan finansial di luar scope Sprint 1. Tabel kosong hanya mengiklankan kemampuan yang belum ada. Ada test yang memastikan tabel ini tetap absen. |
+| `fraud_blacklists` **tidak** dibuat | Verifikasi penipuan finansial adalah **Post-MVP**. Tabel kosong hanya mengiklankan kemampuan yang belum ada. Ada test yang memastikan tabel ini tetap absen. |
 | Semua statement di-guard (`IF NOT EXISTS`, `DO $$ … EXCEPTION WHEN duplicate_object`) | Migrasi harus bisa diulang di CI dan di database yang setengah teraplikasi. Enum tidak punya `CREATE TYPE IF NOT EXISTS`, jadi dibungkus blok `DO`. |
 | Ada tabel tambahan `schema_migrations` | Ledger versi migrasi (`version`, `checksum`, `applied_at`). Bukan bagian dari model domain. |
 
@@ -228,4 +255,8 @@ Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
 
 ---
 
-**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]] · [[Design PostgreSQL Schema]]
+**Peringatan privasi:** `message_logs.extracted_text` menyimpan isi pesan dalam plaintext dan belum punya retention policy. Ini isu terbuka berprioritas tinggi — lihat [[01_Threat_Model_and_Data_Protection]] §5.1.
+
+---
+
+**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]] · [[Design PostgreSQL Schema]] · [[05_Audit_Logs]] · [[01_Threat_Model_and_Data_Protection]]

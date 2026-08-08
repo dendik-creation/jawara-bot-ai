@@ -1,5 +1,16 @@
 # Documentation Audit Report
 
+> **Status: Historis (superseded).** Audit ini dijalankan pada vault versi lama (struktur `00_Index.md` s.d. `04_AI_and_Prompts/`, arsitektur monolit pra-pemisahan ML Service). Disimpan sebagai rekaman proses, **bukan** deskripsi struktur dokumentasi saat ini.
+>
+> Struktur dan scope produk yang berlaku sekarang: [[00_Index]] dan [[05_Product_Scope_and_Roadmap]].
+>
+> Temuan yang **masih terbuka** dan sudah dipindahkan ke dokumen aktif:
+> - Retensi plaintext `message_logs.extracted_text` → [[01_Threat_Model_and_Data_Protection]] §5.1
+> - Dokumen Security yang hilang → sudah ditulis di `09_Security/` ([[06_Platform_Security_Requirements]])
+> - Provider LLM belum diputuskan → [[03_Tech_Stack]] §4
+> - Metodologi pengukuran KPI → [[06_Model_Evaluation]] §4
+> - Roadmap yang hilang → [[05_Product_Scope_and_Roadmap]] §7
+
 > Scope: full vault (`00_Index.md` through `04_AI_and_Prompts/`). Content preserved; changes applied were mechanical (icon removal, broken-claim fixes, cross-links) plus this report. No source code was touched.
 
 ---

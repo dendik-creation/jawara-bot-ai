@@ -2,6 +2,8 @@
 
 Panduan ini untuk development sehari-hari: **infra berat** (WAHA, PostgreSQL, Redis, Qdrant) jalan di Docker Compose, sementara **backend (FastAPI)** dan **frontend (Next.js)** dijalankan langsung via CLI lokal (hot-reload, debugging cepat, tanpa rebuild image tiap ganti kode).
 
+> `ml-service` belum ada di repo maupun compose ([[04_ML_Service]]). Saat service itu lahir, tambahkan langkah menjalankannya di sini — dan karena readiness-nya bergantung pada model yang selesai dimuat, jangan samakan dengan "container sudah up".
+
 ---
 
 ## 1. Prerequisites

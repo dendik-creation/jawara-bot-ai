@@ -1,155 +1,226 @@
-# Arsitektur Sistem (4-Layer Production Architecture)
+# Arsitektur Sistem JAWARA (Target Architecture)
 
-Sistem **JAWARA: Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman** dirancang menggunakan arsitektur **Modular Monolith yang Containerized (Docker-Ready)** berbasis engine **WAHA (WhatsApp HTTP API)** self-hosted untuk menjamin performa tinggi, efisiensi biaya (bebas biaya per pesan Meta), dan privasi data lokal.
+**JAWARA — Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman** adalah *WhatsApp-oriented security platform*: mendeteksi, menganalisis, memantau, dan merespons pesan mencurigakan, penipuan, phishing, social engineering, dan ancaman digital lain yang beredar di WhatsApp.
+
+Dokumen ini mendeskripsikan **arsitektur target**. Sebagian sudah berjalan, sebagian masih rencana — status per komponen ada di §7 dan di [[05_Product_Scope_and_Roadmap]].
 
 ---
 
-## High-Level System Architecture Diagram
+## 1. High-Level Architecture
+
+```text
+                         JAWARA PLATFORM
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │   Next.js Web UI  │
+                    │  Control Panel    │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │   FastAPI Gateway │
+                    │      API Layer    │
+                    └─────────┬─────────┘
+                              │
+              ┌───────────────┼────────────────┐
+              │               │                │
+              ▼               ▼                ▼
+        PostgreSQL          Redis            Qdrant
+              │               │                │
+              └───────────────┼────────────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │    ML Service     │
+                    │    Standalone     │
+                    └─────────┬─────────┘
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │   AI / ML Models  │
+                    └───────────────────┘
+
+                    WhatsApp Integration
+                              │
+                              ▼
+                            WAHA
+```
+
+Versi Mermaid dengan arah panggilan yang eksplisit:
 
 ```mermaid
 flowchart TD
+    WA["WhatsApp User / Group"]
+    WAHA["WAHA<br/>(WhatsApp integration layer)"]
+    FE["Next.js Web UI<br/>(Control Panel)"]
+    GW["FastAPI Gateway<br/>(API + orchestration)"]
+    MQ["Redis<br/>(queue, cache, rate limit)"]
+    WK["Celery Worker<br/>(async orchestration)"]
+    ML["ML Service<br/>(standalone)"]
+    PG[("PostgreSQL")]
+    QD[("Qdrant")]
+    MODELS["AI / ML Models"]
 
-    %% Presentation Layer
-    subgraph L1["1. Presentation & Messaging Engine Layer"]
-        WA[WhatsApp User / Group]
-        WAHA["WAHA WhatsApp HTTP API<br/>(Self-Hosted Container)"]
-        FE[Next.js 14 Web Dashboard]
-        DH[B2G / Health Agency Dashboard]
+    WA <--> WAHA
+    WAHA -- "webhook event" --> GW
+    GW -- "REST (sendText, session control)" --> WAHA
+    FE -- "HTTPS / JSON" --> GW
 
-        WA <--> WAHA
-        DH <--> FE
-    end
+    GW --> PG
+    GW --> MQ
+    MQ --> WK
+    WK --> PG
+    WK -- "HTTP (ml_client)" --> ML
+    GW -- "HTTP (ml_client)" --> ML
+    ML --> QD
+    ML --> MODELS
 
-    %% Gateway & API Layer
-    subgraph L2["2. Gateway & Messaging Layer"]
-        GW[FastAPI Gateway]
-        RL[Redis Rate Limiter]
-        AU[API Key Verification & Auth]
-        MQ[Redis Message Broker]
-        QW[Celery Async Workers]
-
-        GW --> RL
-        GW --> AU
-        GW --> MQ
-        MQ --> QW
-    end
-
-    %% Core Processing Layer
-    subgraph L3["3. Core AI & Safety Processing Layer"]
-
-        subgraph PRE["Multimodal Input Processor"]
-            OCR[EasyOCR / Tesseract Engine]
-            TXT[Bahasa Indonesia Text Normalizer]
-        end
-
-        subgraph SAFE["Safety & Fraud Inspection Engine"]
-            URL[VirusTotal & Google Safe Browsing API]
-            APK[Malicious APK / File Header Inspector]
-            BANK[CekRekening.id Fraud Database Matcher]
-        end
-
-        INT[Intent Router & Classifier]
-        RAG[LlamaIndex RAG Retriever]
-        LLM[JAWARA LLM Response Engine]
-
-        OCR --> INT
-        TXT --> INT
-
-        URL --> INT
-        APK --> INT
-        BANK --> INT
-
-        INT --> RAG
-        RAG --> LLM
-    end
-
-    %% Data & Persistence Layer
-    subgraph L4["4. Data & Persistence Layer"]
-        VDB[(Vector Database: Qdrant)]
-        SQL[(Relational Database: PostgreSQL 16)]
-        EXT[External Threat Intelligence APIs]
-
-        EXT --> API1[Cekrekening.id]
-        EXT --> API2[VirusTotal API]
-        EXT --> API3[Google Safe Browsing API]
-    end
-
-    WAHA -- Local HTTP Webhook --> GW
-    QW --> L3
-    RAG <--> VDB
-    LLM --> SQL
-    SAFE --> EXT
-    LLM -- POST /api/sendText --> WAHA
+    classDef planned stroke-dasharray: 5 5;
+    class ML,MODELS,FE planned;
 ```
+
+Garis putus-putus = komponen yang masih **Planned** (belum ada kodenya di repo).
 
 ---
 
-## 1. Presentation & Messaging Engine Layer
+## 2. Prinsip Arsitektur
 
-Layer antarmuka pengguna dan engine messaging yang di-host mandiri (*self-hosted*).
+1. **Separation of Concerns.** FastAPI mengurus API dan orkestrasi bisnis. ML Service mengurus beban ML. Tidak ada logika inferensi yang ditanam di dalam route gateway.
+2. **Independent ML Lifecycle.** Model bisa berevolusi tanpa mengubah aplikasi API. Versi model adalah data, bukan deploy ulang gateway.
+3. **Controlled Model Deployment.** Training selesai ≠ model masuk produksi. Promosi ke produksi selalu tindakan eksplisit.
+4. **Knowledge Is Not Training.** Update Knowledge Base tidak mengubah parameter model. Lihat [[03_Knowledge_Base]].
+5. **Human-in-the-Loop.** Koreksi operator masuk ke kurasi dataset yang terkontrol, bukan langsung ke model produksi.
+6. **Auditable Security Actions.** Keputusan keamanan dan operasi administratif harus bisa ditelusuri. Lihat [[05_Audit_Logs]].
+7. **Explicit Feature Prioritization.** MVP / Post-MVP / Opsional / Deferred dipisahkan secara eksplisit di [[05_Product_Scope_and_Roadmap]].
 
-| Komponen | Spesifikasi & Tanggung Jawab |
+---
+
+## 3. Tanggung Jawab per Komponen
+
+### 3.1 Next.js Frontend — Control Panel
+
+Antarmuka operator. Bertanggung jawab atas UI untuk: dashboard, threat monitoring, message inspection, incident management, WhatsApp session management, user management, security policy, alert management, Knowledge Base, dataset management, training job, model management, audit log, autentikasi, dan navigasi yang sadar-role.
+
+Batasan keras:
+
+- Frontend **hanya** berbicara ke FastAPI Gateway.
+- Frontend **tidak** memanggil ML Service, Qdrant, Redis, PostgreSQL, atau WAHA secara langsung.
+
+Detail per layar: [[01_Control_Panel_Overview]].
+
+### 3.2 FastAPI Gateway — API Layer
+
+Gateway backend tunggal. Bertanggung jawab atas:
+
+| Domain | Tanggung jawab |
 | :--- | :--- |
-| **WhatsApp Client** | Interface utama end-user (HP lansia/keluarga). Menerima pesan teks, flyer gambar, link, file APK, atau nomor rekening. |
-| **WAHA WhatsApp API Engine** | Container Docker (`devlikeapro/waha`) yang menghubungkan sistem ke jaringan WhatsApp Web/Engine. Mengirim webhook lokal & menyediakan REST API endpoint (`POST /api/sendText`, `/api/sendMedia`). |
-| **Next.js 14 Frontend** | Dashboard analitik web berbasis React/TailwindCSS untuk memantau aktivitas sistem. |
-| **B2G Health Dashboard** | Interface khusus instansi pemerintah untuk melihat *spatial heatmap* sebaran hoaks kesehatan & penipuan. |
+| Akses | Authentication, authorization, RBAC, request validation |
+| Routing | API routing, versioning, error contract |
+| Bisnis | Orkestrasi business logic, user management, threat management, incident management, security policy management, alert management |
+| Jejak | Audit logging |
+| Integrasi | WhatsApp session management (via WAHA), komunikasi ke ML Service |
+| AI/ML | Knowledge Base management, dataset management, training job orchestration, model registry orchestration |
+| Data | Komunikasi ke PostgreSQL, Redis, dan Qdrant seperlunya |
 
----
+Gateway **mengorkestrasi** operasi ML; implementasi ML tidak tinggal di dalamnya.
 
-## 2. Gateway & Messaging Layer
+### 3.3 ML Service — Standalone
 
-Mengelola beban trafik masuk, keamanan webhook lokal, dan pengantrean tugas agar tidak memblokir respon webhook WAHA.
+Service independen, stateless, tidak pernah dipanggil langsung dari frontend. Bertanggung jawab atas ML inference, model loading & execution, preprocessing khusus ML, pembuatan embedding, pemrosesan dataset untuk ML, training, evaluation, pembuatan artefak model, dan eksperimentasi ML.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant WAHA as WAHA Engine (Container)
-    participant GW as FastAPI Gateway
-    participant REDIS as Redis Queue
-    participant WORKER as Celery Worker
+Arah panggilan yang benar:
 
-    WAHA->>GW: POST /api/v1/webhook (Event message.any)
-    GW->>GW: Verifikasi Header API Key & Secret
-    GW->>REDIS: Push Job ke Queue (Payload)
-    GW-->>WAHA: 200 OK (Instant Response < 200ms)
-    REDIS->>WORKER: Consume Job secara Asynchronous
+```text
+Frontend  →  FastAPI  →  ML Service
 ```
 
-* **FastAPI Gateway:** Asynchronous web framework berbasis Python 3.11+.
-* **Redis Rate Limiter:** Mencegah spamming dan serangan DDOS dari nomor WhatsApp tertentu.
-* **Celery Worker Pool:** Memproses analisis AI secara paralel di latar belakang.
+Bukan:
 
----
-
-## 3. Core AI & Safety Processing Layer
-
-Pusat kecerdasan buatan dan pemindaian keamanan multi-vektor.
-
-```mermaid
-flowchart LR
-    IN[Async Worker Payload] --> INT{Intent Router}
-
-    INT -- Kategori Gambar --> OCR[EasyOCR Processing]
-    INT -- Kategori Link/URL --> URL[URL Safety Scan]
-    INT -- Kategori File --> APK[APK Header Check]
-    INT -- Kategori Rekening --> BANK[Fraud DB Matcher]
-    INT -- Kategori Teks/Hoaks --> RAG[RAG Semantic Search]
-
-    OCR --> RAG
-    URL --> LLM[LLM Response Generator]
-    APK --> LLM
-    BANK --> LLM
-    RAG --> LLM
+```text
+Frontend  →  ML Service
 ```
 
+Detail kontrak dan batasan: [[04_ML_Service]].
+
+### 3.4 PostgreSQL — Primary Persistent Store
+
+Sistem pencatatan relasional utama. Domain data: users, roles, permissions, WhatsApp sessions, threats, message metadata, incidents, alerts, security policies, detection rules, knowledge metadata, dataset metadata, training jobs, model metadata, audit logs, operator feedback.
+
+Schema dan status per tabel: [[01_PostgreSQL_Schema]].
+
+### 3.5 Redis — Transient & High-Speed
+
+Antrean, background job, state sementara, caching, rate limiting, koordinasi job, dan state transient terkait sesi.
+
+**Redis bukan database persisten utama.** Data yang harus bertahan hidup lintas restart adalah milik PostgreSQL.
+
+### 3.6 Qdrant — Vector Retrieval
+
+Embedding dokumen, knowledge chunk, semantic search, similarity retrieval, dan retrieval untuk RAG.
+
+**Qdrant bukan database relasional utama.** Metadata knowledge (judul, sumber, status, siapa yang meng-upload) tinggal di PostgreSQL; Qdrant menyimpan vektor dan payload retrieval-nya. Lihat [[02_VectorDB_Specifications]].
+
+### 3.7 WAHA — WhatsApp Integration Layer
+
+Service integrasi WhatsApp (self-hosted, `devlikeapro/waha`). Perannya: menghubungkan sesi WhatsApp, menerima pesan/event, mengirim pesan, mengelola state sesi, dan menangani siklus QR/pairing.
+
+Operasi frontend terhadap sesi WhatsApp **selalu lewat FastAPI**. Internal WAHA tidak diekspos ke frontend. Lihat [[05_Integrations]].
+
 ---
 
-## 4. Data & Persistence Layer
+## 4. Alur Deteksi Utama (ringkas)
 
-* **PostgreSQL 16:** Relational database untuk menyimpan metadata fakta (`fact_items`), log pesan anonim (`message_logs`), pendaftaran pengguna (`user_subscriptions`), dan rekening penipu (`fraud_blacklists`).
-* **Vector Database (Qdrant):** Menyimpan *vector embedding* dari dokumen fakta terverifikasi dengan struktur indeks HNSW.
+```text
+WhatsApp → WAHA → FastAPI → Message Processing → Rules + ML Analysis
+        → Threat Classification → Risk Assessment → Security Policy
+        → Action → Threat / Incident / Audit Data → Dashboard
+```
+
+Rincian tiap tahap, termasuk alur RAG, knowledge ingestion, dan training: [[02_Data_Pipeline]].
 
 ---
 
-**Related:** [[04_How_it_Works]] · [[02_Data_Pipeline]] · [[03_Tech_Stack]] · [[01_PostgreSQL_Schema]]
+## 5. Rules dan ML Saling Melengkapi
+
+Deteksi JAWARA bertumpu pada dua mekanisme yang **tidak menggantikan satu sama lain**:
+
+| Mekanisme | Sifat | Kekuatan |
+| :--- | :--- | :--- |
+| Detection Rules (deterministik) | Keyword, domain, URL, threshold, pola, repeat offender, allowlist/blocklist | Bisa dijelaskan, bisa diubah instan, tidak butuh retraining |
+| ML Classification (probabilistik) | Klasifikasi + confidence + risk score | Menangkap variasi bahasa dan modus baru yang tidak tercover rule |
+
+Keduanya menyuplai Risk Assessment; Security Policy yang memutuskan aksi akhir. Lihat [[03_Detection_Rules]] dan [[02_Security_Policies]].
+
+---
+
+## 6. Boundary Enforcement
+
+- Gateway hanya boleh memanggil ML Service lewat satu modul client (`backend/app/clients/ml_client.py`, **Planned**). Tidak ada route/service lain yang boleh tahu URL atau schema ML Service.
+- ML Service tidak boleh mengambil alih peran API bisnis: tidak ada endpoint user management, tidak ada endpoint incident, tidak menerima trafik dari frontend.
+- Qdrant diakses dari sisi ML Service untuk operasi retrieval/embedding; gateway tidak menghitung atau membandingkan embedding sendiri.
+
+---
+
+## 7. Status Implementasi per Komponen
+
+| Komponen | Status | Bukti / catatan |
+| :--- | :--- | :--- |
+| WAHA container | Implemented | `docker-compose.yml`, healthcheck + volume sesi |
+| FastAPI Gateway (intake) | Partial | webhook, auth `X-Api-Key`, rate limit, health; belum ada auth user/RBAC/route domain |
+| Redis (queue + rate limit) | Implemented | `app/core/rate_limit.py`, `app/services/queue.py` |
+| Celery Worker | Partial | task terdaftar & retry aktif; `run_pipeline()` masih seam kosong |
+| PostgreSQL | Partial | migrasi `001_init_schema.sql` (fact/message/user); tabel domain keamanan & AI/ML belum ada |
+| Qdrant | Partial | collection + payload index dibuat; belum ada embedding yang diisi |
+| ML Service | Planned | direktori `ml-service/` belum ada |
+| Next.js Control Panel | Planned | frontend masih scaffold `create-next-app` + shadcn |
+
+---
+
+## 8. Arsitektur Historis
+
+Versi sebelumnya mendeskripsikan **Modular Monolith 4-layer** dengan OCR, RAG, LLM, dan seluruh safety engine berjalan **di dalam** proses FastAPI/Celery, serta produk bernama **CucuDigital**. Arsitektur itu sudah tidak berlaku: ML dipisahkan ke service sendiri. Rekaman analisis pemisahannya ada di [[02_Architecture_Audit_ML_Decoupling]] (dokumen historis).
+
+---
+
+**Related:** [[04_ML_Service]] · [[02_Data_Pipeline]] · [[03_Tech_Stack]] · [[05_Integrations]] · [[05_Product_Scope_and_Roadmap]] · [[01_PostgreSQL_Schema]]

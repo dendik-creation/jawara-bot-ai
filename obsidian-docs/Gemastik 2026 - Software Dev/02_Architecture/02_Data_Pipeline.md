@@ -1,77 +1,195 @@
-# Data Pipeline & Sequence Flow
+# Data Flow & Pipeline
 
-Dokumen ini menjelaskan alur data komprehensif (*end-to-end data pipeline*) dari saat pengguna mengirimkan pesan di WhatsApp, diproses oleh engine **WAHA (WhatsApp HTTP API)** self-hosted, hingga balasan terverifikasi terkirim kembali.
+Dokumen ini menjelaskan empat alur data utama JAWARA: **deteksi operasional**, **inference dengan konteks AI**, **knowledge ingestion**, dan **training**. Keempatnya sengaja dipisahkan karena masing-masing punya pemicu, aktor, dan konsekuensi yang berbeda.
+
+Status: alur intake (tahap 1–3 pada §1) sebagian sudah berjalan; sisanya **Planned**. Lihat [[05_Product_Scope_and_Roadmap]].
 
 ---
 
-## 1. High-Level Pipeline Flow
+## 1. Alur Operasional Utama (Message → Action)
+
+```text
+WhatsApp
+    ↓
+WAHA
+    ↓
+FastAPI
+    ↓
+Message Processing
+    ↓
+Rules + ML Analysis
+    ↓
+Threat Classification
+    ↓
+Risk Assessment
+    ↓
+Security Policy
+    ↓
+Action
+    ↓
+Threat / Incident / Audit Data
+    ↓
+Dashboard
+```
 
 ```mermaid
 flowchart TD
-    A["1. Incoming Message via WAHA Engine"] -->|Local HTTP Webhook| B["2. API Key Check & Rate Limit (FastAPI)"]
-    B -->|FastAPI| C["3. Enqueue to Redis"]
-    C -->|Celery Worker| D["4. Multimodal Pre-Processing"]
-    D -->|Text / OCR / File / URL| E["5. Intent Routing"]
-    E --> F{"Threat Category"}
-
-    F -- TEXT / HOAX --> G["6a. RAG Vector Search Qdrant"]
-    F -- LINK PHISHING --> G2["6b. VirusTotal / Safe Browsing API"]
-    F -- REKENING FRAUD --> G3["6c. CekRekening.id DB Query"]
-    F -- FILE APK --> G4["6d. APK Static Inspector"]
-
-    G --> H["7. LLM Formatting & Guardrails"]
-    G2 --> H
-    G3 --> H
-    G4 --> H
-
-    H --> I["8. Write PostgreSQL Audit Log"]
-    I --> J["9. Send WAHA Outbound Request (POST /api/sendText)"]
+    A["1. Pesan masuk via WAHA"] -->|webhook| B["2. FastAPI: verifikasi X-Api-Key + rate limit"]
+    B --> C["3. Enqueue ke Redis (ack < 200ms)"]
+    C -->|Celery worker| D["4. Message Processing<br/>normalisasi teks, ekstraksi URL/indicator"]
+    D --> E1["5a. Detection Rules<br/>keyword, domain, blocklist, threshold"]
+    D --> E2["5b. ML Analysis<br/>via ml_client ke ML Service"]
+    E1 --> F["6. Threat Classification"]
+    E2 --> F
+    F --> G["7. Risk Assessment<br/>skor gabungan rules + ML"]
+    G --> H["8. Security Policy Evaluation"]
+    H --> I["9. Action: ALLOW / WARN / BLOCK / ALERT / ESCALATE"]
+    I --> J["10. Persist: threat, message metadata,<br/>incident link, audit entry"]
+    I --> K["11. Respons WhatsApp via WAHA (bila policy meminta)"]
+    J --> L["12. Dashboard / Live Activity"]
 ```
 
----
+### Tahap 1–3 — Intake & Offloading (Implemented)
 
-## 2. Rincian Tahapan Pemrosesan (Step-by-Step)
+1. WAHA mengirim event (`message.any`, `session.status`) ke `POST /api/v1/webhook`.
+2. Gateway memverifikasi header `X-Api-Key`, lalu menerapkan rate limit sliding-window Redis per `(session, chat_id)` — default 20 request / 60 detik, balas `429` + `Retry-After` bila terlampaui.
+3. Gateway membalas `200 OK` cepat dan melempar payload ke Redis queue; Celery worker mengonsumsi secara asinkron. Rate limiter **fail open** bila Redis tidak reachable (kegagalan dicatat di log).
 
-### Tahap 1: WAHA Webhook Ingestion & Offloading (< 200 ms)
-1. **WAHA Container Webhook:** Container `devlikeapro/waha` menerima event `message.any` dari jaringan WhatsApp dan mengirimkan HTTP POST Webhook ke endpoint FastAPI `/api/v1/webhook`.
-2. **Authenticity Check:** Gateway memverifikasi signature/header secret `X-Api-Key`.
-3. **Async Queue Offloading:** FastAPI langsung merespon WAHA dengan `HTTP 200 OK` dalam kurun waktu $< 200\text{ ms}$ untuk menghindari retries, lalu melempar payload ke Redis Queue.
+### Tahap 4 — Message Processing (Planned)
 
-### Tahap 2: Pre-Processing & Intent Classification
-1. **Pemeriksaan Tipe Input:**
-   - **Teks:** Dicuci melalui kata dasar normalizer Bahasa Indonesia.
-   - **Gambar:** Dikirim ke EasyOCR / Tesseract engine untuk diekstraksi teks flyer/infografis.
-   - **Tautan (URL):** Ditarik string URL utamanya dan diperiksa apakah menggunakan pemendek link (bit.ly, tinyurl, dll).
-   - **File Dokumen:** Diperiksa mime-type dan ekstensi file (khususnya `.apk`).
-   - **Nomor Rekening:** Diekstrak digit angka dan nama bank/e-wallet.
-2. **Klasifikasi Intent:** Classifier menentukan satu dari 5 kategori utama:
-   `HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`.
+Normalisasi teks Bahasa Indonesia, ekstraksi URL/domain, ekstraksi indicator (nomor rekening, nomor telepon), deteksi tipe lampiran. OCR gambar dijalankan di ML Service, bukan di worker gateway.
 
-### Tahap 3: Deep Verification Engine
-1. **Jika `HEALTH_HOAX` / `GENERAL_NEWS` (RAG Search):**
-   - Teks input diubah menjadi embedding vector menggunakan `text-embedding-3-small` (1536 dim) atau `IndoBERT` (768 dim).
-   - Melakukan *Cosine Similarity Search* pada koleksi Qdrant `fact_knowledge_base`.
-   - Jika skor kemiripan $\ge 0.80$, *fact context* diambil. Jika $< 0.80$, sistem menandai sebagai *Unverified/Low Confidence*.
-2. **Jika `PHISHING_LINK`:**
-   - URL dipindai secara *real-time* ke Google Safe Browsing API & VirusTotal API v3.
-3. **Jika `FINANCIAL_FRAUD` (Rekening):**
-   - Nomor rekening dicek terhadap basis data `fraud_blacklists` di PostgreSQL dan API CekRekening.id.
-4. **Jika `FILE_APK`:**
-   - Inspector mendeteksi file bermodus instalasi aplikasi berbahaya di luar Play Store.
+### Tahap 5 — Rules + ML (Planned)
 
-### Tahap 4: LLM Response & WAHA Outbound Dispatch
-1. **LLM Generation:** Context hasil verifikasi disisipkan ke System Prompt JAWARA (Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman). LLM menghasilkan pesan dalam struktur 4 bagian WhatsApp Markdown.
-2. **Audit Logging:** Transaksi dicatat secara anonim di tabel PostgreSQL `message_logs`.
-3. **Outbound Dispatch:** Celery Worker memanggil REST API WAHA `POST http://waha:3000/api/sendText` dengan payload JSON `{ "chatId": "...", "text": "..." }` untuk mengirim balasan pesan.
+Dua jalur berjalan berdampingan:
+
+- **Detection Rules** dievaluasi di gateway/worker — deterministik, murah, bisa diubah tanpa retraining ([[03_Detection_Rules]]).
+- **ML Analysis** dipanggil ke ML Service lewat `ml_client` — klasifikasi + confidence + `model_version` ([[04_ML_Service]]).
+
+### Tahap 6–7 — Klasifikasi & Risk Assessment (Planned)
+
+Kategori ancaman awal: Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other Suspicious Activity ([[03_Threat_Monitoring]]). Risk score adalah gabungan sinyal rules dan ML, bukan output ML mentah.
+
+### Tahap 8–9 — Policy & Action (Planned)
+
+Security Policy memetakan (kategori, risk score, indicator, konteks user) ke satu aksi: `ALLOW`, `WARN`, `BLOCK`, `ALERT`, `ESCALATE` ([[02_Security_Policies]]). Aksi dan evaluasinya tercatat di audit trail.
+
+### Tahap 10–12 — Persist & Surface (Planned)
+
+Threat, metadata pesan, keterkaitan incident, alert, dan audit entry ditulis ke PostgreSQL, lalu tampil di Control Panel dan Live Activity ([[02_Command_Center]]).
 
 ---
 
-## 3. Strategi Error Handling & Fallback
+## 2. Alur Inference dengan Konteks AI (RAG)
 
-* **WAHA Disconnection / Re-session:** Jika sesi WhatsApp di WAHA terputus, WAHA memiliki mekanisme *automatic session reconnect* dan notifikasi status sesi via webhook `/api/v1/session/status`.
-* **LLM API Downtime / Timeout:** Jika LLM mengalami timeout $> 5\text{ detik}$, sistem secara otomatis mengalihkan balasan ke *fallback static template* berbasis hasil RAG murni.
-* **Vector DB Unavailable:** Jika Qdrant tidak dapat dijangkau, sistem menggunakan pencarian teks sederhana (PostgreSQL `ILIKE` / Full-Text Search) sebagai cadangan.
+Dipakai saat klasifikasi/penjelasan membutuhkan konteks pengetahuan.
+
+```text
+Message
+    ↓
+FastAPI
+    ↓
+ML Service
+    ↓
+Knowledge Retrieval
+    ↓
+Qdrant
+    ↓
+Context
+    ↓
+ML / AI Inference
+    ↓
+Classification
+```
+
+Catatan penting: retrieval **tidak** mengubah parameter model. Yang berubah hanya konteks yang disuplai ke inference. Lihat [[03_Knowledge_Base]].
 
 ---
 
-**Related:** [[01_System_Architecture]] · [[04_How_it_Works]] · [[02_VectorDB_Specifications]] · [[01_LLM_System_Prompt]]
+## 3. Alur Knowledge Ingestion
+
+```text
+Admin Upload
+    ↓
+FastAPI
+    ↓
+File Validation
+    ↓
+Document Parsing
+    ↓
+Chunking
+    ↓
+Embedding Generation
+    ↓
+Qdrant
+    ↓
+Knowledge Available for Retrieval
+```
+
+**Upload knowledge tidak me-retrain model.** Dokumen yang di-upload juga tidak otomatis dianggap tepercaya — validasi tipe file, ukuran, dan status review berlaku sebelum knowledge dipakai untuk retrieval ([[06_Platform_Security_Requirements]]).
+
+---
+
+## 4. Alur Training Data
+
+```text
+Message / Curated Data
+        ↓
+Operator Feedback
+        ↓
+Dataset Curation
+        ↓
+Dataset Validation
+        ↓
+Training Job
+        ↓
+ML Service
+        ↓
+Evaluation
+        ↓
+Candidate Model
+        ↓
+Model Registry
+        ↓
+Manual Validation
+        ↓
+Production Model
+```
+
+Jalur berikut **tidak** ada dan tidak boleh diimplementasikan:
+
+```text
+Operator Feedback  →  Production Model
+```
+
+Setiap anak panah di atas adalah gerbang, bukan formalitas. Rinciannya di [[05_Training_Jobs]] dan [[08_Continuous_Improvement_Loop]].
+
+---
+
+## 5. Knowledge vs Training — perbandingan cepat
+
+| | Knowledge Base | Model Training |
+| :--- | :--- | :--- |
+| Input | Dokumen (PDF, DOCX, TXT, CSV) | Dataset berlabel |
+| Proses | Parse → chunk → embed → simpan | Train → evaluate → artifact |
+| Penyimpanan hasil | Qdrant (vektor) + PostgreSQL (metadata) | Model registry |
+| Parameter model | **Tidak berubah** | **Berubah** |
+| Efek | Langsung terasa di retrieval berikutnya | Baru terasa setelah promosi ke produksi |
+| Pemicu | Upload operator | Training job eksplisit |
+
+---
+
+## 6. Error Handling & Degradasi
+
+| Kegagalan | Perilaku |
+| :--- | :--- |
+| Sesi WAHA terputus | WAHA reconnect otomatis; event `session.status` masuk ke gateway dan memicu alert `MEDIUM` ([[04_Alert_Center]], Planned) |
+| Broker Redis mati | Webhook tetap balas `200` dengan header `X-Queued: 0`; kegagalan enqueue tercatat sebagai `enqueue failed` di log gateway (event tersebut hilang) |
+| Redis mati saat rate limiting | Limiter fail open — request diteruskan, kegagalan di-log |
+| ML Service tidak reachable | Gateway jatuh ke jalur rules-only; ancaman tetap dicatat, klasifikasi ditandai `ml_unavailable`, alert `MEDIUM` dinaikkan (Planned) |
+| Qdrant tidak reachable | Retrieval dilewati; inference berjalan tanpa konteks knowledge dan ditandai low-confidence (Planned) |
+| Job payload malformed | Task Celery membuang job (non-retryable) — retry tidak akan mengubah bentuk payload |
+
+---
+
+**Related:** [[01_System_Architecture]] · [[04_ML_Service]] · [[03_Knowledge_Base]] · [[05_Training_Jobs]] · [[02_Security_Policies]] · [[02_VectorDB_Specifications]]

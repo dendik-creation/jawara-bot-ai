@@ -28,6 +28,9 @@ Isi `.env` dengan **credential produksi asli**, bukan placeholder:
 | `WAHA_API_KEY` | dipakai gateway untuk verifikasi header `X-Api-Key` — generate random string panjang |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | credential database produksi |
 | `NEXT_PUBLIC_API_URL` | domain publik API gateway (misal `https://api.jawara.example.id`), bukan `localhost` |
+| `USER_HASH_SALT` | salt SHA-256 untuk `user_hash` — generate random panjang, **jangan** pakai `changeme`. Mengganti salt setelah produksi jalan mematikan semua `user_subscriptions` lama beserta `message_logs`-nya (FK cascade) |
+| `RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | default `20` / `60` detik per (session, chat) |
+| `QDRANT_COLLECTION` / `EMBEDDING_DIM` | `fact_knowledge_base` / `1536` (`text-embedding-3-small`); `768` kalau pindah ke IndoBERT — ganti dimensi berarti buat ulang collection dan embed ulang |
 | `WAHA_PORT` / `API_GATEWAY_PORT` / `QDRANT_PORT` / `FRONTEND_PORT` / `POSTGRES_PORT` / `REDIS_PORT` | host port mapping — ganti kalau bentrok dengan service lain di server yang sama, tidak perlu edit `docker-compose.yml` |
 
 Jangan commit `.env` — sudah di `.gitignore`.
@@ -67,6 +70,26 @@ Health endpoint gateway:
 ```bash
 curl http://localhost:8000/health
 # {"status":"ok","dependencies":{"database":true,"redis":true}}
+```
+
+---
+
+## 4b. Bootstrap Data Layer
+
+Sekali per deployment baru (dan setelah menambah file migrasi). Keduanya idempotent — aman diulang di setiap redeploy:
+
+```bash
+docker compose exec api-gateway python -m app.db.migrate
+docker compose exec api-gateway python -m app.vector.qdrant_setup
+```
+
+`migrate` apply `app/db/migrations/*.sql` berurutan dan mencatatnya di tabel `schema_migrations`; `qdrant_setup` membuat collection `fact_knowledge_base` lalu mencetak config live-nya. Collection yang sudah ada **tidak** dibuat ulang — hanya payload index yang di-assert ulang, supaya embedding tidak terhapus.
+
+Verifikasi:
+
+```bash
+docker compose exec postgres psql -U <POSTGRES_USER> -d <POSTGRES_DB> -c "\dt"
+curl http://localhost:6333/collections/fact_knowledge_base
 ```
 
 ---
@@ -111,7 +134,9 @@ docker image prune -f   # buang image lama yang menganggur
 - `postgres` (`POSTGRES_PORT`), `redis` (`REDIS_PORT`), `qdrant` (`QDRANT_PORT`) di-publish ke host (dibutuhkan untuk dev hybrid) — di server produksi, block port ini di firewall/security group supaya hanya reachable dari `localhost`/VPN, jangan biarkan terbuka ke internet publik.
 - Taruh `api-gateway` (8000) dan `frontend-dashboard` (3001) di belakang reverse proxy dengan TLS, jangan expose port raw ke publik.
 - `WAHA_API_KEY` adalah satu-satunya auth layer webhook (`X-Api-Key`) — rotate berkala, jangan reuse across environment.
-- Rate-limiting webhook (`Create Redis Queue` task) belum live — sampai task itu selesai, gateway belum ada proteksi flood di layer aplikasi; andalkan firewall/reverse-proxy rate limit sementara.
+- Rate-limiting webhook sudah live: **20 request / 60 detik per (session, chat_id)**, sliding window di Redis, balas `429` + `Retry-After`. Catatan operasional: limiter ini **fail open** — kalau Redis tidak reachable, request tetap diteruskan dan kegagalannya di-log. Rate limit reverse-proxy tetap layak dipasang sebagai lapisan kedua, khususnya untuk trafik yang belum lolos auth `X-Api-Key`.
+- `USER_HASH_SALT` adalah satu-satunya hal yang memisahkan `user_hash` dari nomor WhatsApp asli. Bocornya salt + daftar nomor = hash bisa dibalik brute force (ruang nomor telepon kecil). Simpan setara password database, jangan commit, jangan reuse antar environment.
+- `message_logs.extracted_text` menyimpan isi pesan pengguna dalam plaintext dan **belum punya retention policy** (temuan terbuka di [[01_Documentation_Audit_Report]]). Putuskan sebelum tabel ini mulai diisi oleh [[Create Audit Logging]].
 
 ---
 

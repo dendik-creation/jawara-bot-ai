@@ -21,6 +21,10 @@ class WahaWebhookEvent(BaseModel):
     payload: dict[str, Any]
     engine: str | None = None
 
+    # WAHA adds top-level fields per engine/version; keep them so the queued job
+    # is a faithful copy of what arrived.
+    model_config = {"extra": "allow"}
+
 
 class SessionStatusEvent(BaseModel):
     event: str | None = None

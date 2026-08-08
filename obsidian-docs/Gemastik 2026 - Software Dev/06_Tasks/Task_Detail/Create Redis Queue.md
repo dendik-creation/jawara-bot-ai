@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -51,4 +51,14 @@ Decouples the fast webhook ack from slow downstream processing, and prevents spa
 
 ## Notes
 
-Don't invent a rate-limit number silently — confirm with product owner or document the chosen default explicitly.
+Rate-limit default chosen and documented, not silent: **20 requests / 60s sliding window, keyed per `(session, chat_id)`** (`RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` in `.env`). Rationale: a user forwarding a batch of ~10 messages passes untouched, sustained flooding is cut at 20. Verified by flood test — 20 × `200`, then `429` with `Retry-After: 60`, while a second chat ID on the same session stayed unaffected. Revisit once real traffic exists; the value is config, not code.
+
+Sliding window (Redis sorted set, `ZREMRANGEBYSCORE` + `ZADD` + `ZCARD`) rather than a fixed bucket — a fixed window lets a caller push 2× the limit across the reset boundary.
+
+Two deliberate failure-mode decisions:
+- **Rate limiter fails open.** Redis unreachable means requests are allowed and the failure logged. Dropping real user messages is worse than briefly not throttling.
+- **Enqueue failure still acks 200** (`X-Queued: 0` header + error log). A non-200 makes WAHA retry the same event repeatedly, which does not help when Redis is the broken component.
+
+Measured webhook ack: ~6ms, well inside the 200ms budget — the blocking kombu producer runs in a threadpool so a slow broker cannot stall the event loop.
+
+**Implementation:** `backend/app/core/rate_limit.py`, `backend/app/core/redis_client.py`, `backend/app/services/queue.py`, `backend/app/schemas/queue.py`, wired in `backend/app/api/v1/endpoints/webhook.py`. Tests: `backend/tests/test_rate_limit.py`, `backend/tests/test_queue.py`, `backend/tests/test_webhook.py`.

@@ -6,10 +6,6 @@ kanban-plugin: board
 
 ## ToDo
 
-- [ ] [[Create Redis Queue]] @{2026-08-07}
-- [ ] [[Implement Celery Workers]] @{2026-08-07}
-- [ ] [[Design PostgreSQL Schema]] @{2026-08-07}
-- [ ] [[Create Qdrant Collection]] @{2026-08-08}
 - [ ] [[Implement Text Normalizer]] @{2026-08-08}
 - [ ] [[Implement URL Extractor]] @{2026-08-08}
 - [ ] [[Build Intent Router]] @{2026-08-08}
@@ -35,6 +31,10 @@ kanban-plugin: board
 - [x] [[Setup Docker Environment]] @{2026-08-06}
 - [x] [[Configure WAHA]] @{2026-08-06}
 - [x] [[Implement FastAPI Gateway]] @{2026-08-07}
+- [x] [[Create Redis Queue]] @{2026-08-07}
+- [x] [[Implement Celery Workers]] @{2026-08-07}
+- [x] [[Design PostgreSQL Schema]] @{2026-08-07}
+- [x] [[Create Qdrant Collection]] @{2026-08-08}
 
 
 

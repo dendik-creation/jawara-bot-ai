@@ -17,7 +17,7 @@ Panduan ini untuk development sehari-hari: **infra berat** (WAHA, PostgreSQL, Re
 
 ## 2. Setup `.env`
 
-Copy `.env.example` → `.env` di root repo, isi semua value (`WAHA_DASHBOARD_USERNAME/PASSWORD`, `WAHA_API_KEY`, `POSTGRES_*`). Compose infra-only step di bawah tetap butuh file ini.
+Copy `.env.example` → `.env` di root repo, isi semua value (`WAHA_DASHBOARD_USERNAME/PASSWORD`, `WAHA_API_KEY`, `POSTGRES_*`, `USER_HASH_SALT`). Compose infra-only step di bawah tetap butuh file ini.
 
 ```bash
 cp .env.example .env
@@ -71,7 +71,24 @@ export QDRANT_HOST="localhost"
 export QDRANT_PORT="6333"
 export WAHA_API_URL="http://localhost:3000"
 export WAHA_API_KEY="<sama dengan WAHA_API_KEY di .env>"
+
+# Celery broker/result backend (DB 0 = queue, DB 1 = hasil task)
+export CELERY_BROKER_URL="redis://localhost:6379/0"
+export CELERY_RESULT_BACKEND="redis://localhost:6379/1"
+
+# Salt anonimisasi user_hash — samakan dengan USER_HASH_SALT di .env,
+# beda salt = beda user_hash = row user_subscriptions tidak match
+export USER_HASH_SALT="<sama dengan USER_HASH_SALT di .env>"
 ```
+
+Bootstrap data layer (sekali per database/volume baru, aman diulang):
+
+```bash
+python -m app.db.migrate            # apply schema PostgreSQL (idempotent)
+python -m app.vector.qdrant_setup   # buat collection fact_knowledge_base + payload index
+```
+
+`qdrant_setup` mencetak config live-nya untuk dicocokkan dengan tabel di [[02_VectorDB_Specifications]].
 
 Jalankan dengan hot-reload:
 
@@ -88,8 +105,45 @@ curl http://localhost:8000/health
 Jalankan unit test:
 
 ```bash
-pytest -q
+pytest -q -m "not integration"   # murni unit, tanpa infra
+pytest -q                        # + integration test (butuh postgres/redis/qdrant hidup)
 ```
+
+Test bertanda `integration` otomatis **skip** kalau service-nya tidak reachable atau `DATABASE_URL` tidak valid — jadi `pytest -q` tetap hijau di mesin tanpa infra, tapi tidak diam-diam melewatkan kegagalan nyata.
+
+---
+
+## 4b. Jalankan Celery Worker — CLI lokal
+
+Terminal terpisah, venv dan environment variable yang sama seperti §4:
+
+```bash
+cd backend
+source .venv/Scripts/activate
+celery -A app.worker worker --loglevel=info --pool=solo
+```
+
+`--pool=solo` **wajib di Windows** — pool prefork default Celery tidak jalan di Windows. Container (Linux) tetap pakai prefork, tidak perlu flag ini.
+
+Verifikasi worker melahap job:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/webhook \
+  -H "X-Api-Key: <WAHA_API_KEY>" -H "Content-Type: application/json" \
+  -d '{"event":"message.any","session":"default","payload":{"id":"dev_1","from":"628111@c.us","body":"tes"}}'
+```
+
+Log worker (JSON satu baris per event) akan memuat `waha_message_id` yang sama dengan log gateway — itu correlation ID-nya. Cek antrean langsung:
+
+```bash
+docker compose exec redis redis-cli LLEN jawara.messages   # 0 = worker sudah menghabiskan queue
+```
+
+### Rate limit
+
+Gateway membatasi **20 request / 60 detik per (session, chat_id)** (sliding window Redis). Request ke-21 dalam window balas `429` + header `Retry-After`. Saat load test manual, ganti `payload.from` atau turunkan/naikkan `RATE_LIMIT_MAX_REQUESTS` di `.env` — jangan ubah kode.
+
+Kalau Redis mati, rate limiter **fail open** (request diteruskan, kegagalan di-log). Kalau broker mati, webhook tetap balas `200` tapi dengan header `X-Queued: 0` — event-nya hilang, dan itu tercatat sebagai `enqueue failed` di log gateway.
 
 ### Troubleshooting: `/health` balas `{"status":"degraded","dependencies":{"database":false,"redis":false}}`
 
@@ -140,7 +194,7 @@ Untuk test end-to-end webhook (WAHA → FastAPI lokal) tanpa mengubah kode:
     -d '{"event":"message.any","session":"default","payload":{"id":"1","body":"test"}}'
   ```
 
-Celery worker (`app.worker`) belum diimplementasikan — task **Implement Celery Workers** masih di `TASKS.md`. Untuk dev sekarang cukup jalankan backend + infra di atas.
+Celery worker sudah live (lihat §4b) — jalankan bersama backend supaya job yang masuk queue benar-benar dikonsumsi, bukan menumpuk di Redis.
 
 ---
 
@@ -152,7 +206,7 @@ docker compose down                              # stop + remove containers, kee
 docker compose down -v                           # DESTRUCTIVE: also wipes waha_sessions/postgres_data/qdrant_data
 ```
 
-Backend lokal: `Ctrl+C`. Frontend lokal: `Ctrl+C`.
+Backend lokal: `Ctrl+C`. Celery worker: `Ctrl+C`. Frontend lokal: `Ctrl+C`.
 
 ---
 

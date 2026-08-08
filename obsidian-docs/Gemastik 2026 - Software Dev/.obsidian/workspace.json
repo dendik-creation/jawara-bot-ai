@@ -11,10 +11,14 @@
             "id": "01be0005ae9c1f32",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "02_Architecture/02_Data_Pipeline.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "New tab"
+              "title": "02_Data_Pipeline"
             }
           }
         ]
@@ -186,24 +190,23 @@
   },
   "active": "01be0005ae9c1f32",
   "lastOpenFiles": [
-    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.4d636e4b1da1",
-    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.c04bd459bc0c",
-    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.c2768b28768e",
-    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.0d30b3217c96",
-    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.bfc8f5bd2f44",
-    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.4352e7116485",
-    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.730d86603ebd",
     "01_Overview/04_How_it_Works.md",
-    "02_Architecture/02_Data_Pipeline.md",
-    "07_How_to_Run/01_Dev_Environtment.md",
-    "07_How_to_Run/02_Prod_Environtment.md",
-    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.062a10dc77a2",
-    "07_How_to_Run/02_Prod_Environtment.md.tmp.14580.90042edb3fed",
-    "07_How_to_Run/01_Dev_Environtment.md.tmp.14580.c9bd033d71e9",
-    "00_Index.md",
-    "00_Index.md.tmp.14580.198d642cb601",
-    "Untitled.md",
     "06_Tasks/TASKS.md",
+    "03_Database/02_VectorDB_Specifications.md.tmp.1336.27261ae3cc46",
+    "03_Database/01_PostgreSQL_Schema.md.tmp.1336.ce04be916712",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.1336.d5b6fb3bd819",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.1336.ed5c14d980a8",
+    "07_How_to_Run/02_Prod_Environtment.md.tmp.1336.7244a8aba622",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.1336.a97e6cd9bb5d",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.1336.2514e9472bc8",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.1336.6ca35c116fe3",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.1336.9b935d7cef69",
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.1336.30422fd9d45c",
+    "07_How_to_Run/01_Dev_Environtment.md",
+    "02_Architecture/02_Data_Pipeline.md",
+    "07_How_to_Run/02_Prod_Environtment.md",
+    "00_Index.md",
+    "Untitled.md",
     "06_Tasks/Task_Detail/Implement FastAPI Gateway.md",
     "06_Tasks/Task_Detail/Build Text Verification Pipeline.md",
     "06_Tasks/Task_Detail/Configure WAHA.md",

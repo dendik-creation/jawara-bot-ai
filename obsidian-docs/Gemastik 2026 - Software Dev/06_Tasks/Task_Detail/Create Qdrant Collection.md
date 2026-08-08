@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -45,4 +45,14 @@ Text hoax verification (RAG) cannot function without this collection existing at
 
 ## Notes
 
-None
+Config verified live against the Qdrant REST API, not just asserted in code: `Cosine`, size `1536`, `hnsw_config.m=16`, `ef_construct=100`, `on_disk_payload=true`.
+
+**Payload indexes added beyond the doc's config table:** `category`, `is_active`, `fact_item_id`, `verdict`. The documented hybrid-search query filters on `category` + `is_active`; without an index Qdrant falls back to a full payload scan per query, which defeats the point of on-disk payload storage. `fact_item_id` is indexed because it is the 1:1 join key back to `fact_items.id` in Postgres.
+
+**Re-run is safe by design:** an existing collection is left untouched (recreating it would drop every embedding) — only the payload indexes are re-asserted. `ensure_collection()` returns `True` only when it actually created the collection.
+
+Vector dimension is config (`EMBEDDING_DIM`), not a constant: 1536 for `text-embedding-3-small`, 768 for IndoBERT. Switching models means recreating the collection and re-embedding — a dimension change is not a migration Qdrant can do in place.
+
+Run: `python -m app.vector.qdrant_setup` (prints the live config back for verification).
+
+**Implementation:** `backend/app/vector/qdrant_setup.py`, `qdrant-client==1.8.2` pinned to match the `qdrant/qdrant:v1.8.0` server. Tests: `backend/tests/test_qdrant_collection.py` — including the documented filtered query, asserting an `is_active=false` point is excluded.

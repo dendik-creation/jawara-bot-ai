@@ -95,4 +95,25 @@ flowchart LR
 
 ---
 
-**Related:** [[02_Data_Pipeline]] · [[01_PostgreSQL_Schema]] · [[01_LLM_System_Prompt]]
+## 5. Implementasi
+
+Collection dibuat oleh `backend/app/vector/qdrant_setup.py` (`python -m app.vector.qdrant_setup`), memakai `qdrant-client==1.8.2` yang dipin agar cocok dengan server `qdrant/qdrant:v1.8.0`. Script mencetak config live-nya untuk dicocokkan dengan tabel §1.
+
+**Payload index** (tambahan di luar tabel config §1, wajib untuk hybrid search §3):
+
+| Field | Tipe index | Alasan |
+| :--- | :--- | :--- |
+| `category` | keyword | filter utama query RAG |
+| `is_active` | bool | filter utama query RAG |
+| `fact_item_id` | keyword | join key 1:1 ke `fact_items.id` di PostgreSQL |
+| `verdict` | keyword | filter lanjutan saat menyusun konteks LLM |
+
+Tanpa index, Qdrant melakukan full payload scan tiap query — persis yang membuat `on_disk_payload=true` jadi mahal.
+
+**Idempotency:** collection yang sudah ada tidak dibuat ulang (itu akan menghapus seluruh embedding); hanya payload index yang di-assert ulang.
+
+**Dimensi vektor adalah config (`EMBEDDING_DIM`), bukan konstanta:** `1536` untuk `text-embedding-3-small`, `768` untuk IndoBERT. Qdrant tidak bisa mengubah dimensi collection secara in-place — pindah model berarti buat ulang collection dan embed ulang seluruh knowledge base.
+
+---
+
+**Related:** [[02_Data_Pipeline]] · [[01_PostgreSQL_Schema]] · [[01_LLM_System_Prompt]] · [[Create Qdrant Collection]]

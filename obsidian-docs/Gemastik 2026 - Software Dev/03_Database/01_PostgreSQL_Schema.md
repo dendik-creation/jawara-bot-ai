@@ -210,4 +210,22 @@ CREATE INDEX idx_fact_items_category ON fact_items(category) WHERE is_active = T
 
 ---
 
-**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]]
+## Implementasi & Migrasi
+
+DDL di atas adalah *source of truth*. Bentuk yang benar-benar dijalankan ada di `backend/app/db/migrations/001_init_schema.sql`, di-apply oleh `python -m app.db.migrate` (lihat [[Design PostgreSQL Schema]]).
+
+Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
+
+| Hal | Alasan |
+|---|---|
+| `fraud_blacklists` **tidak** dibuat | Verifikasi penipuan finansial di luar scope Sprint 1. Tabel kosong hanya mengiklankan kemampuan yang belum ada. Ada test yang memastikan tabel ini tetap absen. |
+| Semua statement di-guard (`IF NOT EXISTS`, `DO $$ … EXCEPTION WHEN duplicate_object`) | Migrasi harus bisa diulang di CI dan di database yang setengah teraplikasi. Enum tidak punya `CREATE TYPE IF NOT EXISTS`, jadi dibungkus blok `DO`. |
+| Ada tabel tambahan `schema_migrations` | Ledger versi migrasi (`version`, `checksum`, `applied_at`). Bukan bagian dari model domain. |
+
+**Konvensi `user_hash`:** `sha256(USER_HASH_SALT + ':' + nomor_atau_group_id)`, hex lowercase 64 karakter — implementasinya di `backend/app/core/hashing.py`. Salt tunggal level aplikasi (bukan per-row), karena `user_hash` harus reproducible dari chat ID mentah supaya bisa jadi lookup key antar pesan. Ganti salt = seluruh `user_subscriptions` lama tidak match lagi dan `message_logs`-nya ikut terhapus lewat cascade.
+
+**Catatan trigger `updated_at`:** `CURRENT_TIMESTAMP` adalah waktu **mulai transaksi**, bukan waktu statement. Insert lalu update di dalam satu transaksi menghasilkan `updated_at` yang identik; perubahannya baru terlihat antar transaksi. Pakai `clock_timestamp()` kalau suatu saat butuh presisi per statement.
+
+---
+
+**Related:** [[01_System_Architecture]] · [[02_Data_Pipeline]] · [[02_VectorDB_Specifications]] · [[Design PostgreSQL Schema]]

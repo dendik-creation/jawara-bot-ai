@@ -17,7 +17,9 @@ services:
     networks:
       - jawara-net
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      # /ping is the only unauthenticated route; / and /health return 401 once
+      # WAHA_DASHBOARD_* credentials are set.
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,8 +36,16 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - WAHA_API_URL=http://waha:3000
       - WAHA_API_KEY=${WAHA_API_KEY}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS}
+      - USER_HASH_SALT=${USER_HASH_SALT}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION}
+      - EMBEDDING_DIM=${EMBEDDING_DIM}
+      - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,9 +72,17 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - WAHA_API_URL=http://waha:3000
       - WAHA_API_KEY=${WAHA_API_KEY}
+      - USER_HASH_SALT=${USER_HASH_SALT}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION}
+      - EMBEDDING_DIM=${EMBEDDING_DIM}
+      - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
@@ -72,7 +90,9 @@ services:
     networks:
       - jawara-net
     healthcheck:
-      test: ["CMD", "celery", "-A", "app.worker", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
+      # CMD-SHELL, not CMD: exec form runs no shell, so $HOSTNAME would stay a
+      # literal string and the ping would never match the node name.
+      test: ["CMD-SHELL", "celery -A app.worker inspect ping -d celery@$$HOSTNAME"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -110,7 +130,10 @@ services:
     networks:
       - jawara-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      # qdrant/qdrant ships no wget/curl — talk HTTP over bash's /dev/tcp instead.
+      test:
+        - "CMD-SHELL"
+        - "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"healthz check passed\" <&3'"
       interval: 10s
       timeout: 5s
       retries: 5

@@ -5,12 +5,32 @@
  * WAHA, Qdrant, Redis, PostgreSQL, or the ML Service
  * (08_Dashboard/01_Control_Panel_Overview.md §4). Every URL in this file starts
  * from NEXT_PUBLIC_API_URL for that reason: there is nowhere else to point it.
+ *
+ * Every Control Panel endpoint requires an operator session token
+ * (`Authorization: Bearer …`). There is no unauthenticated read left: the old
+ * NEXT_PUBLIC_DASHBOARD_KEY shared secret is gone, and a build-time constant in
+ * a browser bundle was never a credential anyway.
  */
 
+import { getToken, onUnauthorized } from "@/lib/session"
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-const DASHBOARD_KEY = process.env.NEXT_PUBLIC_DASHBOARD_KEY ?? ""
 
 export type RiskLevel = "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN"
+
+export type Operator = {
+  id: string
+  email: string
+  full_name: string
+  last_login_at: string | null
+}
+
+export type LoginResult = {
+  access_token: string
+  token_type: string
+  expires_at: string
+  operator: Operator
+}
 
 export type DashboardSummary = {
   available: boolean
@@ -87,16 +107,38 @@ export class GatewayError extends Error {
   }
 }
 
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const headers: HeadersInit = {}
-  if (DASHBOARD_KEY) {
-    headers["X-Dashboard-Key"] = DASHBOARD_KEY
+/** The session is gone (expired, revoked, or never existed). */
+export class UnauthorizedError extends GatewayError {
+  constructor(message = "sesi berakhir, silakan masuk lagi") {
+    super(message, 401)
+    this.name = "UnauthorizedError"
+  }
+}
+
+async function request<T>(
+  path: string,
+  { method = "GET", body, signal, auth = true }: {
+    method?: "GET" | "POST"
+    body?: unknown
+    signal?: AbortSignal
+    auth?: boolean
+  } = {},
+): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (body !== undefined) headers["Content-Type"] = "application/json"
+
+  if (auth) {
+    const token = getToken()
+    if (!token) throw new UnauthorizedError("belum masuk")
+    headers["Authorization"] = `Bearer ${token}`
   }
 
   let response: Response
   try {
     response = await fetch(`${API_URL}${path}`, {
+      method,
       headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       // Always live data: a cached security dashboard is a lying one.
       cache: "no-store",
@@ -105,14 +147,48 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw new GatewayError(error instanceof Error ? error.message : "gateway unreachable")
   }
 
-  if (!response.ok) {
-    throw new GatewayError(`gateway returned ${response.status}`, response.status)
+  if (response.status === 401) {
+    // One place decides what an expired session means, so every screen reacts
+    // the same way instead of each rendering its own broken state.
+    if (auth) onUnauthorized()
+    throw new UnauthorizedError(await errorDetail(response, "email atau kata sandi salah"))
   }
 
+  if (!response.ok) {
+    throw new GatewayError(
+      await errorDetail(response, `gateway returned ${response.status}`),
+      response.status,
+    )
+  }
+
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
+/** FastAPI puts the human-readable reason in `detail`; fall back to the status. */
+async function errorDetail(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown }
+    return typeof body.detail === "string" ? body.detail : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function get<T>(path: string, signal?: AbortSignal) {
+  return request<T>(path, { signal })
+}
+
 export const api = {
+  login: (email: string, password: string) =>
+    request<LoginResult>("/api/v1/auth/login", {
+      method: "POST",
+      body: { email, password },
+      auth: false,
+    }),
+  logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
+  me: (signal?: AbortSignal) => get<Operator>("/api/v1/auth/me", signal),
+
   summary: (signal?: AbortSignal) => get<DashboardSummary>("/api/v1/dashboard/summary", signal),
   activity: (limit = 15, signal?: AbortSignal) =>
     get<ActivityFeed>(`/api/v1/dashboard/activity?limit=${limit}`, signal),

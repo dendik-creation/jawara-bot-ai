@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { Geist_Mono, IBM_Plex_Sans } from "next/font/google"
 
 import "./globals.css"
-import { AppShell } from "@/components/layout/app-shell"
+import { AuthProvider } from "@/components/auth/auth-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@/lib/utils"
 
@@ -18,6 +18,11 @@ export const metadata: Metadata = {
   description: "Control & Monitoring Center untuk platform keamanan WhatsApp JAWARA",
 }
 
+/**
+ * The shell used to live here. It moved to `app/(panel)/layout.tsx` when login
+ * arrived: /login must render without a sidebar, and a signed-out visitor must
+ * not see the panel chrome at all.
+ */
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -31,7 +36,7 @@ export default function RootLayout({
     >
       <body>
         <ThemeProvider>
-          <AppShell>{children}</AppShell>
+          <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
       </body>
     </html>

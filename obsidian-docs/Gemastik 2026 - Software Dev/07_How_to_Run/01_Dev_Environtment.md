@@ -65,23 +65,24 @@ source .venv/Scripts/activate
 pip install -r requirements-dev.txt
 ```
 
-Set environment variables (proses lokal di luar `jawara-net` — hostname docker seperti `postgres`/`redis`/`waha` **tidak resolve**; pakai `localhost` + port host yang di-publish/di-override):
+Environment variable **tidak perlu di-export manual**. `app/core/config.py` membaca `.env` di root repo (path absolut, bukan relatif terhadap CWD), file yang sama dengan yang dibaca Compose — jadi backend lokal dan container tidak pernah berbeda kredensial.
+
+Yang tidak ada di `.env` diturunkan dari komponennya, dengan host `localhost` (proses lokal ada di luar `jawara-net`, hostname docker seperti `postgres`/`redis`/`waha` **tidak resolve**):
+
+| Yang dipakai kode | Diturunkan dari | Hasil di dev hybrid |
+|---|---|---|
+| `DATABASE_URL` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | `postgresql://<user>:<pass>@localhost:5432/<db>` |
+| `REDIS_URL`, `CELERY_BROKER_URL` | `REDIS_PORT` | `redis://localhost:6379/0` |
+| `CELERY_RESULT_BACKEND` | `REDIS_PORT` | `redis://localhost:6379/1` (DB 1 = hasil task, terpisah dari queue) |
+| `WAHA_API_URL` | `WAHA_PORT` | `http://localhost:3000` |
+| `ML_SERVICE_URL` | `ML_SERVICE_PORT` | `http://localhost:9000` |
+
+`WAHA_API_KEY`, `ML_SERVICE_API_KEY`, `USER_HASH_SALT`, `DASHBOARD_API_KEY`, `QDRANT_COLLECTION` terbaca langsung dari `.env` — tidak ada lagi kemungkinan salt berbeda antara backend lokal dan worker (beda salt = beda `user_hash` = row `user_subscriptions` tidak match).
+
+Environment variable asli tetap menang atas isi `.env`; itulah cara `docker-compose.yml` menyuntikkan hostname in-network (`postgres`, `redis`, `ml-service`). Untuk override satu nilai saja tanpa menyalin seluruh file, buat `backend/.env` — ia dibaca setelah `.env` root.
 
 ```bash
-export DATABASE_URL="postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:5432/<POSTGRES_DB>"
-export REDIS_URL="redis://localhost:6379/0"
-export QDRANT_HOST="localhost"
-export QDRANT_PORT="6333"
-export WAHA_API_URL="http://localhost:3000"
-export WAHA_API_KEY="<sama dengan WAHA_API_KEY di .env>"
-
-# Celery broker/result backend (DB 0 = queue, DB 1 = hasil task)
-export CELERY_BROKER_URL="redis://localhost:6379/0"
-export CELERY_RESULT_BACKEND="redis://localhost:6379/1"
-
-# Salt anonimisasi user_hash — samakan dengan USER_HASH_SALT di .env,
-# beda salt = beda user_hash = row user_subscriptions tidak match
-export USER_HASH_SALT="<sama dengan USER_HASH_SALT di .env>"
+export DATABASE_URL="postgresql://user:pass@localhost:5433/other-db"   # hanya bila memang beda
 ```
 
 Bootstrap data layer (sekali per database/volume baru, aman diulang):
@@ -97,17 +98,7 @@ python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Ser
 
 Dua langkah terakhir mengisi knowledge base. Tanpa itu, `POST /v1/rag-query` selalu mengembalikan `unverified: true` — bukan error, tapi tidak ada yang bisa dicocokkan. `ingest_knowledge` butuh `ml-service` hidup dan `ML_SERVICE_URL` mengarah ke sana (`http://localhost:9000` untuk dev hybrid).
 
-Env tambahan untuk proses lokal:
-
-```bash
-export ML_SERVICE_URL="http://localhost:9000"
-export ML_SERVICE_API_KEY="<sama dengan ML_SERVICE_API_KEY di .env>"
-
-# Kosongkan kalau belum punya — provider yang tidak dikonfigurasi hanya
-# menghasilkan verdict UNKNOWN, bukan kegagalan pipeline
-export GOOGLE_SAFE_BROWSING_API_KEY=""
-export VIRUSTOTAL_API_KEY=""
-```
+`ML_SERVICE_URL`/`ML_SERVICE_API_KEY` sudah tertangani oleh tabel di atas. `GOOGLE_SAFE_BROWSING_API_KEY` dan `VIRUSTOTAL_API_KEY` boleh dikosongkan di `.env` — provider yang tidak dikonfigurasi hanya menghasilkan verdict `UNKNOWN`, bukan kegagalan pipeline. Isi dengan nilai asal-asalan justru lebih buruk: provider dianggap aktif lalu ditolak upstream.
 
 Jalankan dengan hot-reload:
 
@@ -134,7 +125,7 @@ Test bertanda `integration` otomatis **skip** kalau service-nya tidak reachable 
 
 ## 4b. Jalankan Celery Worker — CLI lokal
 
-Terminal terpisah, venv dan environment variable yang sama seperti §4:
+Terminal terpisah, venv yang sama seperti §4 (environment-nya ikut `.env` root, jadi tidak ada yang perlu diulang):
 
 ```bash
 cd backend
@@ -144,22 +135,29 @@ celery -A app.worker worker --loglevel=info --pool=solo
 
 `--pool=solo` **wajib di Windows** — pool prefork default Celery tidak jalan di Windows. Container (Linux) tetap pakai prefork, tidak perlu flag ini.
 
-Verifikasi worker melahap job:
+Verifikasi worker melahap job. Isi `body` menentukan jalur mana yang diuji — pesan harus benar-benar mengandung klaim, bukan sekadar `"tes"`:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/webhook \
   -H "X-Api-Key: <WAHA_API_KEY>" -H "Content-Type: application/json" \
-  -d '{"event":"message.any","session":"default","payload":{"id":"dev_1","from":"628111@c.us","body":"tes"}}'
+  -d '{"event":"message.any","session":"default","payload":{"id":"dev_1","from":"628111@c.us","body":"Air rebusan atau perasan daun kitolod dapat menyembuhkan katarak dan membersihkan mata tanpa perlu operasi."}}'
 ```
 
 Log worker akan menutup dengan satu baris `pipeline complete` berisi hasil akhirnya:
 
 ```json
 {"message":"pipeline complete","waha_message_id":"dev_1","intent":"HEALTH_HOAX",
- "engine":"text_verification","risk":"HIGH","match_count":1,
- "similarity_score":0.8707,"response_dispatched":true,
- "response_latency_ms":840,"logged":true,"degradations":[]}
+ "intent_confidence":1.0,"engine":"text_verification","risk":"HIGH","match_count":1,
+ "similarity_score":0.9169,"response_dispatched":false,
+ "logged":true,"degradations":["dispatch_failed:timeout"]}
 ```
+
+Dua hal yang wajar berbeda di mesin sendiri:
+
+- **`response_dispatched: false` + `dispatch_failed:*`** selama session WAHA bernama `default` belum ada / belum `WORKING`. Pipeline-nya tetap lengkap; hanya balasannya yang tidak terkirim. Cek dengan `curl -H "X-Api-Key: <WAHA_API_KEY>" http://localhost:3000/api/sessions`.
+- **`similarity_score`** dengan `EMBEDDING_PROVIDER=hash` (default) bersifat **leksikal, bukan semantik** — parafrase tidak melewati `score_threshold` 0.80. Kalimat di atas sengaja dekat dengan `claim_summary` fakta demo dari `seed_facts`. Untuk mencocokkan parafrase, butuh embedder semantik (lihat [[04_ML_Service]]).
+
+Body `"tes"` **tidak** menghasilkan output di atas, dan itu bukan kegagalan: tidak ada satu pun keyword lexicon maupun URL yang cocok, jadi skor total 0 dan router mengembalikan `intent: UNKNOWN`, `engine: none` — pipeline berhenti sebelum verifikasi. Itu perilaku yang benar untuk pesan tanpa klaim.
 
 `degradations` adalah tempat melihat apa yang tidak berjalan: `ml_unavailable:*`, `url_intel_unavailable`, `knowledge_unverified`, `llm_fallback:*`, `dispatch_failed:*`, `audit_write_failed`. Daftar kosong berarti seluruh jalur berjalan penuh.
 
@@ -174,6 +172,34 @@ docker compose exec redis redis-cli LLEN jawara.messages   # 0 = worker sudah me
 Gateway membatasi **20 request / 60 detik per (session, chat_id)** (sliding window Redis). Request ke-21 dalam window balas `429` + header `Retry-After`. Saat load test manual, ganti `payload.from` atau turunkan/naikkan `RATE_LIMIT_MAX_REQUESTS` di `.env` — jangan ubah kode.
 
 Kalau Redis mati, rate limiter **fail open** (request diteruskan, kegagalan di-log). Kalau broker mati, webhook tetap balas `200` tapi dengan header `X-Queued: 0` — event-nya hilang, dan itu tercatat sebagai `enqueue failed` di log gateway.
+
+### Troubleshooting: `password authentication failed for user "postgres"` di log worker
+
+```
+asyncpg.exceptions.InvalidPasswordError: password authentication failed for user "postgres"
+```
+
+User `postgres` tidak pernah muncul di `.env` — itu tanda proses **tidak membaca konfigurasi apa pun** dan jatuh ke placeholder lama. Penyebab historisnya: `Settings` membaca `.env` relatif terhadap CWD, sedangkan `.env` ada di root repo dan worker dijalankan dari `backend/`, jadi tidak ada file yang ketemu dan `export` di terminal lain tidak ikut terbawa.
+
+Sudah diperbaiki — `.env` root sekarang dibaca lewat path absolut (§4). Kalau error ini masih muncul:
+
+1. Pastikan `.env` ada di **root repo**, bukan di `backend/`.
+2. Cek nilai yang benar-benar terbaca: `python -c "from app.core.config import get_settings; print(get_settings().database_url)"`. Harus menampilkan `POSTGRES_USER` milikmu, bukan `postgres`.
+3. Kalau `DATABASE_URL` sempat di-export ke nilai lama, `unset DATABASE_URL` — environment variable asli menang atas `.env`.
+
+Efeknya terbatas pada `degradations: ["audit_write_failed"]`: pipeline tetap selesai dan tetap membalas, tapi tidak ada baris audit — by design, kegagalan penulisan audit tidak boleh menelan jawaban yang sudah dihasilkan.
+
+### Troubleshooting: `ml service call failed` dengan `error: ml_unreachable`
+
+Penyebabnya sama persis: tanpa konfigurasi, `ML_SERVICE_URL` jatuh ke `http://ml-service:9000` — hostname itu hanya resolve **di dalam** `jawara-net`. Dari proses lokal, yang benar `http://localhost:9000` (§4, diturunkan dari `ML_SERVICE_PORT`).
+
+Cek layanannya hidup sebelum menyalahkan konfigurasi:
+
+```bash
+curl -H "X-Internal-Api-Key: <ML_SERVICE_API_KEY>" http://localhost:9000/v1/ready
+```
+
+`degradations: ["generation_unavailable:ml_unreachable"]` artinya jawaban jatuh ke template dan klasifikasi jalan dengan rules saja — bukan crash, tapi juga bukan hasil yang mau diukur saat menguji pipeline.
 
 ### Troubleshooting: `/health` balas `{"status":"degraded","dependencies":{"database":false,"redis":false}}`
 

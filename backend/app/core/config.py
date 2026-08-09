@@ -1,22 +1,52 @@
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# config.py → core → app → backend → repo root. The single `.env` at the root is
+# what Compose reads, so a locally run gateway/worker must read the same file or
+# the two halves of the stack silently disagree on credentials.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Root `.env` first, then a `backend/.env` if one exists — later files win,
+    # so a developer can override one value without copying the whole file.
+    # Real environment variables still outrank both, which is how Compose keeps
+    # injecting in-network hostnames.
+    model_config = SettingsConfigDict(
+        env_file=(_REPO_ROOT / ".env", ".env"),
+        extra="ignore",
+    )
 
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/jawara"
-    redis_url: str = "redis://localhost:6379/0"
+    # Connection strings are derived from the component variables below when they
+    # are not set explicitly (see `_derive_connection_urls`). Compose sets them
+    # explicitly with in-network hostnames; a local process gets `localhost` and
+    # the credentials from the root `.env`.
+    database_url: str = ""
+    redis_url: str = ""
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
-    waha_api_url: str = "http://localhost:3000"
+    waha_api_url: str = ""
     waha_api_key: str = "changeme"
+
+    # Components of the derived URLs. These are the variables the root `.env`
+    # already carries for Compose, reused here so local runs need no second copy.
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "jawara"
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    waha_host: str = "localhost"
+    waha_port: int = 3000
 
     # Celery broker/backend default to the same Redis instance, separate logical DBs
     # so queued jobs and task results never collide on a FLUSHDB of either.
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/1"
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
     celery_queue_name: str = "jawara.messages"
     celery_max_retries: int = 3
     celery_retry_backoff_seconds: int = 2
@@ -52,7 +82,9 @@ class Settings(BaseSettings):
 
     # ML Service (standalone). The gateway reaches it only through
     # app/clients/ml_client.py — see 02_Architecture/04_ML_Service.md §3.
-    ml_service_url: str = "http://ml-service:9000"
+    ml_service_url: str = ""
+    ml_service_host: str = "localhost"
+    ml_service_port: int = 9000
     ml_service_api_key: str = "changeme"
     # Per-endpoint budgets, carved out of the <3.0s end-to-end target. classify
     # is tighter than generate because generation is the one call that cannot be
@@ -99,6 +131,41 @@ class Settings(BaseSettings):
     dashboard_api_key: str = ""
 
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def _derive_connection_urls(self) -> "Settings":
+        """Fill the connection strings nobody set from their component parts.
+
+        A locally run gateway or worker used to fall back to hardcoded
+        placeholders (`postgres:postgres@localhost/jawara`, `http://ml-service:9000`),
+        which fail in two different and confusing ways: an
+        `InvalidPasswordError` against a database that does exist, and an
+        unresolvable Docker hostname. Deriving from `POSTGRES_*` / `REDIS_*` /
+        `ML_SERVICE_PORT` — the variables the root `.env` already defines — makes
+        the local default correct instead of merely plausible.
+
+        Only fields the caller left untouched are derived: `model_fields_set`
+        contains anything supplied by environment, `.env` file, or constructor,
+        so Compose's explicit in-network URLs always win.
+        """
+        set_fields = self.model_fields_set
+
+        if "database_url" not in set_fields or not self.database_url:
+            self.database_url = (
+                f"postgresql://{self.postgres_user}:{self.postgres_password}"
+                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            )
+        if "redis_url" not in set_fields or not self.redis_url:
+            self.redis_url = f"redis://{self.redis_host}:{self.redis_port}/0"
+        if "celery_broker_url" not in set_fields or not self.celery_broker_url:
+            self.celery_broker_url = f"redis://{self.redis_host}:{self.redis_port}/0"
+        if "celery_result_backend" not in set_fields or not self.celery_result_backend:
+            self.celery_result_backend = f"redis://{self.redis_host}:{self.redis_port}/1"
+        if "waha_api_url" not in set_fields or not self.waha_api_url:
+            self.waha_api_url = f"http://{self.waha_host}:{self.waha_port}"
+        if "ml_service_url" not in set_fields or not self.ml_service_url:
+            self.ml_service_url = f"http://{self.ml_service_host}:{self.ml_service_port}"
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

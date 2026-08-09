@@ -48,6 +48,11 @@ Integration tests skip themselves when Postgres/Redis/Qdrant are unreachable, so
 ## Conventions
 
 - **Config comes from env vars only** (`app/core/config.py`); no literals in code.
+  The repo-root `.env` is read by absolute path, so a process started from
+  `backend/` sees exactly what Compose sees. Connection strings left unset are
+  derived from their components (`POSTGRES_*`, `REDIS_PORT`, `ML_SERVICE_PORT`)
+  against `localhost`; real env vars still win, which is how Compose injects
+  in-network hostnames.
 - **Logs are JSON, one object per line.** Pass context via `extra=`, never string
   interpolation — `waha_message_id` is the correlation ID from webhook through
   queue to worker.

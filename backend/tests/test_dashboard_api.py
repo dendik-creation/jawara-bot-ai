@@ -36,6 +36,24 @@ ACTIVITY = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def open_dashboard(monkeypatch):
+    """Run the read-API tests with no access gate configured.
+
+    `Settings` reads the repo-root `.env`, which carries a real
+    `DASHBOARD_API_KEY` on a developer machine — without pinning it empty here
+    every unauthenticated request in this module would answer `401` and the
+    assertions would be testing the gate, not the payload. The gate itself has
+    its own test below, which sets the key explicitly.
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("DASHBOARD_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def stub_queries(monkeypatch):
     monkeypatch.setattr("app.services.dashboard.summary", AsyncMock(return_value=SUMMARY))

@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -48,3 +48,9 @@ Primary URL-reputation source for the phishing/credential-harvesting threat doma
 ## Notes
 
 Third-party dependency with rate limits/cost — document quota handling before production traffic.
+
+## Implementation (2026-08-08)
+
+`backend/app/clients/safe_browsing.py` — `threatMatches:find` v4, batch satu request, cache Redis, batas URL per pesan, HTTP 429 tidak di-retry. Verdict → `risk_level_enum`: cocok = `HIGH`, `matches` kosong = `LOW`, gagal/tanpa key = `UNKNOWN` + `available: false`.
+
+**Belum diverifikasi terhadap API nyata — `GOOGLE_SAFE_BROWSING_API_KEY` kosong.** Penanganan kuota dan cara menyelesaikan verifikasi: [[Integrate_Safe_Browsing]].

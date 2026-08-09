@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -47,3 +47,13 @@ First preprocessing stage for the text path; feeds directly into the Intent Rout
 ## Notes
 
 None
+
+## Implementation (2026-08-08)
+
+`backend/app/pipeline/normalizer.py` — `normalize_text()` mengembalikan `NormalizedText` (`raw`, `text`, `urls_masked`, `emoji_count`, `was_truncated`, `slang_replaced`).
+
+Urutan transform: NFKC → buang karakter tak terlihat → mask URL → buang emoji (dihitung) → buang markdown WhatsApp → casefold → runtuhkan huruf berulang 3+ → runtuhkan tanda baca berulang → ekspansi slang → pulihkan URL → rapikan spasi. URL di-mask lebih dulu karena path dan query bersifat case-sensitive.
+
+Singkatan ambigu (`dr`, `no`, `sm`, `jg`, `dl`) sengaja **tidak** diekspansi — tebakan yang salah mengubah makna pesan yang akan diklasifikasi.
+
+Test: `backend/tests/test_normalizer.py`, korpus 12 sampel WhatsApp Indonesia + uji determinisme per sampel.

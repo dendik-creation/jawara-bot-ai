@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -53,3 +53,13 @@ Central dispatch point of the AI pipeline. The full documented taxonomy has 5 ca
 Do not hardcode assumptions that only 3 categories will ever exist — `FINANCIAL_FRAUD` and `FILE_APK` routing is future-sprint work, not out-of-scope permanently.
 
 Scope update: routing `FILE_APK` (mendeteksi lampiran `.apk` dan memperingatkan) tetap masuk MVP, tapi **analisis statik isi APK adalah Opsional / Future** ([[06_Optional_APK_Inspector]]). `FINANCIAL_FRAUD` / CekRekening.id adalah **Post-MVP** ([[05_Product_Scope_and_Roadmap]]). Router juga harus mengakomodasi kategori ancaman Control Panel yang lebih luas (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) — pemetaannya ke `category_enum` masih keputusan terbuka ([[01_PostgreSQL_Schema]] §0).
+
+## Implementation (2026-08-08)
+
+`backend/app/pipeline/intent_router.py` + `categories.py`. Skoring keyword dan indikator (URL, shortlink, host IP, defang, lampiran `.apk`, bentuk pertanyaan); confidence = pangsa skor pemenang; dua ambang config (`INTENT_MIN_SCORE`, `INTENT_CONFIDENCE_THRESHOLD`).
+
+Routing: `HEALTH_HOAX`/`GENERAL_NEWS` → `text_verification`, `PHISHING_LINK` → `url_safety`, `FILE_APK` → `apk_warning`, `FINANCIAL_FRAUD` → `unsupported` (Post-MVP), tanpa kategori → `none`.
+
+Anti-drift: test mem-parse `001_init_schema.sql` dan membandingkan `category_enum`/`risk_level_enum` dengan enum Python.
+
+Catatan lengkap termasuk keputusan yang masih terbuka: [[Build_Intent_Router]].

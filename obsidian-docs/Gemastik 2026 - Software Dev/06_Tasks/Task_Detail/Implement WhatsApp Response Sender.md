@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -48,3 +48,11 @@ Final step of the pipeline — closes the loop from inbound webhook to outbound 
 ## Notes
 
 <3.0s end-to-end is a stated KPI in [[03_Pitching_Narrative]] — this is the last point where that budget can be measured and enforced.
+
+## Implementation (2026-08-08)
+
+`backend/app/clients/waha_client.py` — `POST /api/sendText`, retry pada kegagalan transien (timeout/5xx) sampai `WAHA_SEND_MAX_ATTEMPTS`, 4xx tidak di-retry. Kegagalan permanen dikembalikan sebagai data (`SendResult`), tidak dilempar sebagai exception, supaya baris audit tetap ditulis.
+
+`response_latency_ms` diukur dari `received_at` (dicap gateway saat enqueue) sampai setelah dispatch, disimpan ke `message_logs`, dan melampaui `END_TO_END_TARGET_MS` memicu log `WARNING`.
+
+**Belum diverifikasi terhadap sesi WhatsApp nyata** (belum ada pairing). Pengukuran latensi nyata dan implikasinya terhadap KPI 3 detik: [[Implement_WhatsApp_Response_Sender]].

@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -48,3 +48,11 @@ Second URL-reputation source; the two are combined so a phishing link caught by 
 ## Notes
 
 Third-party dependency with rate limits/cost — document quota handling before production traffic.
+
+## Implementation (2026-08-08)
+
+`backend/app/clients/virustotal.py` (lookup v3, tanpa submit) dan `backend/app/pipeline/url_safety.py` (verdict gabungan). Ambang `VIRUSTOTAL_HIGH_THRESHOLD` (default 2) memetakan jumlah deteksi ke `risk_level_enum`; HTTP 404 = `UNKNOWN`, bukan `LOW`.
+
+Penggabungan: yang terburuk menang, `UNKNOWN` tidak pernah menurunkan risiko, shortlink/host IP yang tak terverifikasi minimal `MEDIUM`. Kedua provider dipanggil konkuren.
+
+**Belum diverifikasi terhadap API nyata — `VIRUSTOTAL_API_KEY` kosong.** Kuota dan keputusan privasi (hanya lookup): [[Integrate_VirusTotal]].

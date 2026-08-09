@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -52,3 +52,17 @@ Primary verification path for the two text-based threat categories in Sprint 1 s
 ## Notes
 
 Qdrant-down fallback (Postgres full-text search) is a resilience feature, not required for the Sprint 1 milestone — defer unless time allows.
+
+## Implementation (2026-08-08)
+
+Embedding dan retrieval hidup di `ml-service/` sesuai [[04_ML_Service]] §5, bukan di gateway.
+
+- `ml-service/app/embeddings/` — antarmuka provider-agnostic; `hash-embed-v0` (offline, deterministik, default) dan `text-embedding-3-small`.
+- `ml-service/app/rag/qdrant_repo.py` — pencarian terfilter `category` + `is_active`, `top_k=3`, `score_threshold=0.80`, cosine 1536-dim.
+- `POST /v1/rag-query` — di bawah threshold mengembalikan `matches: []` + `unverified: true`, bukan match terdekat.
+- `POST /v1/kb/upsert` + `backend/app/scripts/ingest_knowledge.py` — ingestion diorkestrasi gateway, embedding dihitung ML Service. Point id = `fact_items.id` sehingga re-ingest memperbarui di tempat.
+- `backend/app/scripts/seed_facts.py` — 4 fakta demo dari contoh few-shot vault.
+
+Terverifikasi live: skor similarity 0.8707 pada Qdrant nyata. Test integrasi membuktikan filter kategori/aktif benar-benar menyaring.
+
+Batasan embedder default (leksikal, bukan semantik) dan cara mengaktifkan embedder produksi: [[Build_Text_Verification_Pipeline]].

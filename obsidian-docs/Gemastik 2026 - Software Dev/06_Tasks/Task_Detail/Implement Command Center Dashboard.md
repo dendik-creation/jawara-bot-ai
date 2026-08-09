@@ -2,7 +2,7 @@
 
 ## Status
 
-ToDo
+Done
 
 ## Priority
 
@@ -59,3 +59,13 @@ Sebelumnya task ini bernama "Implement Basic Analytics Dashboard" dengan sasaran
 ## Notes
 
 Heatmap spasial B2G adalah **Post-MVP** — schema belum punya field wilayah dan keputusan privasinya belum diambil. Transport live activity feed (SSE/WebSocket/polling) juga belum diputuskan; kalau task ini dikerjakan sebelum keputusan itu, mulai dengan polling dan tandai sebagai sementara.
+
+## Implementation (2026-08-08)
+
+Gateway: `GET /api/v1/dashboard/{summary,activity,recent}`, `GET /api/v1/system/services`, `GET /api/v1/whatsapp/sessions` (`backend/app/services/dashboard.py`). Agregasi langsung dari PostgreSQL — tanpa Analytics Service.
+
+Frontend: shell navigasi sesuai [[01_Control_Panel_Overview]] §2 (tanpa entri Analytics), layar Command Center, layar Service Health, polling lewat `hooks/use-polling.ts`.
+
+`extracted_text` tidak pernah di-`SELECT`. Metrik tanpa data dirender "belum tersedia", bukan `0`. Incidents dan alerts melaporkan `available: false` dengan alasannya.
+
+Celah yang harus diketahui: **belum ada auth operator/RBAC** — hanya `DASHBOARD_API_KEY` sebagai tambalan. Jangan ekspos gateway ke internet sebelum Fase 2. Detail: [[Implement_Command_Center_Dashboard]].

@@ -45,6 +45,13 @@ services:
       - USER_HASH_SALT=${USER_HASH_SALT}
       - QDRANT_COLLECTION=${QDRANT_COLLECTION}
       - EMBEDDING_DIM=${EMBEDDING_DIM}
+      - ML_SERVICE_URL=http://ml-service:9000
+      - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY}
+      - GOOGLE_SAFE_BROWSING_API_KEY=${GOOGLE_SAFE_BROWSING_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS}
+      - LOG_MESSAGE_CONTENT=${LOG_MESSAGE_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
       postgres:
@@ -79,6 +86,11 @@ services:
       - USER_HASH_SALT=${USER_HASH_SALT}
       - QDRANT_COLLECTION=${QDRANT_COLLECTION}
       - EMBEDDING_DIM=${EMBEDDING_DIM}
+      - ML_SERVICE_URL=http://ml-service:9000
+      - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY}
+      - GOOGLE_SAFE_BROWSING_API_KEY=${GOOGLE_SAFE_BROWSING_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - LOG_MESSAGE_CONTENT=${LOG_MESSAGE_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
       postgres:
@@ -97,6 +109,48 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+
+  ml-service:
+    build: ./ml-service
+    container_name: jawara-ml
+    restart: always
+    ports:
+      - "${ML_SERVICE_PORT}:9000"
+    environment:
+      - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER}
+      - EMBEDDING_DIM=${EMBEDDING_DIM}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - LLM_MODEL=${LLM_MODEL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    networks:
+      - jawara-net
+    healthcheck:
+      # Readiness, not liveness: dependants must not receive traffic while the
+      # models are still loading (02_Architecture/04_ML_Service.md §6).
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - |
+          import os, urllib.request
+          request = urllib.request.Request(
+              "http://localhost:9000/v1/ready",
+              headers={"X-Internal-Api-Key": os.environ["ML_SERVICE_API_KEY"]},
+          )
+          urllib.request.urlopen(request)
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   postgres:
     image: postgres:16-alpine
@@ -155,7 +209,14 @@ services:
       start_period: 5s
 
   frontend-dashboard:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # NEXT_PUBLIC_* values are inlined into the client bundle by `next build`,
+      # so they have to arrive as build args. Passing them only as runtime
+      # `environment` would leave the browser calling the compile-time default.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_DASHBOARD_KEY: ${DASHBOARD_API_KEY}
     container_name: jawara-dashboard
     restart: always
     ports:

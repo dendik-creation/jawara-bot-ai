@@ -8,13 +8,19 @@ Persyaratan keamanan lintas-komponen. Tiap item ditandai statusnya: **Implemente
 
 | Persyaratan | Status | Catatan |
 | :--- | :--- | :--- |
-| Authentication (operator Control Panel) | Planned | Sesi berbasis token, expiry eksplisit. Sementara ada `DASHBOARD_API_KEY` — shared secret level deployment, **bukan** identitas per-pengguna dan **bukan** pengganti item ini |
-| Authorization / RBAC | Planned | Ditegakkan di server, bukan hanya menyembunyikan menu ([[07_Users_and_Risk]]) |
+| Authentication (operator Control Panel) | Implemented | Email + password (bcrypt), sesi berbasis token dengan expiry eksplisit (`AUTH_SESSION_TTL_MINUTES`, default 480). Sesi adalah row `operator_sessions`, jadi logout benar-benar mencabut dan menonaktifkan akun mematikan sesi hidupnya. `DASHBOARD_API_KEY` **dihapus**. Detail: [[Implement_Operator_Auth]] |
+| Brute force login | Implemented | 5 percobaan per (email, IP klien) per 5 menit, dihitung **sebelum** password diperiksa, lalu `429` |
+| Anti account enumeration | Implemented | Password salah, email tidak dikenal, dan akun nonaktif memberi satu pesan yang sama; email tak dikenal tetap membayar satu verifikasi bcrypt supaya tidak terbaca dari waktu respons |
+| Authorization / RBAC | Planned | Belum ada role sama sekali: setiap operator yang bisa masuk melihat seluruh panel. Ditegakkan di server saat dibangun, bukan sekadar menyembunyikan menu ([[07_Users_and_Risk]]) |
 | Webhook authentication (`X-Api-Key`) | Implemented | `backend/app/core/security.py` |
 | Service-to-service auth (gateway ↔ ML Service) | Implemented | `X-Internal-Api-Key` via env, diperiksa sebagai FastAPI dependency (`ml-service/app/core/security.py`); ML Service hanya reachable di jaringan Docker internal |
 | CORS | Implemented | Daftar origin eksplisit dari `CORS_ALLOW_ORIGINS`, bukan wildcard (`backend/app/main.py`) |
 
 Dua kelas kredensial ini tidak boleh dicampur: token sesi operator (identitas per-user, berumur pendek) dan API key webhook (mesin, berumur panjang). Model ancamannya berbeda — pembajakan sesi vs pemalsuan webhook.
+
+Sisa risiko yang diketahui: token sesi disimpan di `localStorage` browser, jadi XSS di Control Panel bisa membacanya. Mitigasi saat ini expiry 8 jam + pencabutan saat logout, bukan solusi. Cookie `httpOnly` menuntut gateway satu origin dengan panel atau route handler Next.js yang mem-proxy setiap panggilan — keputusan terbuka di [[Open_Decisions_Carried_Forward]].
+
+Yang **belum** ada dan harus diketahui sebelum ekspos publik: tidak ada RBAC, tidak ada 2FA, tidak ada audit trail aksi operator ([[05_Audit_Logs]] masih Planned untuk aksi manusia), dan tidak ada endpoint pendaftaran mandiri — akun dibuat lewat `app.scripts.create_operator` oleh orang yang sudah memegang kredensial database.
 
 ---
 

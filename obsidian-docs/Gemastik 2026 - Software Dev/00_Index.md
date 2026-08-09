@@ -4,7 +4,7 @@
 > *Sebelumnya bernama CucuDigital; referensi nama lama hanya boleh muncul sebagai catatan historis.*
 > **Kompetisi:** Gemastik 2026 — Cabang Software Development
 > **Kategori produk:** WhatsApp-oriented security platform — mendeteksi, menganalisis, memantau, dan merespons pesan mencurigakan, penipuan, phishing, social engineering, dan ancaman digital lain.
-> **Status:** Dokumentasi arsitektur target lengkap. Pipeline deteksi berjalan end-to-end sejak 2026-08-08 — pesan masuk lewat webhook keluar sebagai balasan WhatsApp dan baris audit. Status per fitur ada di [[05_Product_Scope_and_Roadmap]]; batasan yang belum bisa diverifikasi ada di [[00_Sprint_1_Completion_Notes]].
+> **Status:** Dokumentasi arsitektur target lengkap. Pipeline deteksi berjalan end-to-end sejak 2026-08-08, dan sejak 2026-08-09 **balasannya terbukti sampai ke WhatsApp sungguhan** — pesan masuk lewat webhook keluar sebagai balasan terkirim dan baris audit. Control Panel kini menuntut login operator. Status per fitur ada di [[05_Product_Scope_and_Roadmap]]; batasan yang belum bisa diverifikasi ada di [[00_Sprint_2_Completion_Notes]].
 
 ---
 
@@ -14,7 +14,8 @@
 | :--- | :--- |
 | Apa yang masuk MVP, apa yang tidak? | [[05_Product_Scope_and_Roadmap]] |
 | Bagaimana bentuk sistemnya? | [[01_System_Architecture]] |
-| Apa yang sudah benar-benar jalan? | [[01_System_Architecture]] §7 · [[00_Sprint_1_Completion_Notes]] |
+| Apa yang sudah benar-benar jalan? | [[01_System_Architecture]] §7 · [[00_Sprint_2_Completion_Notes]] |
+| Bagaimana operator masuk ke Control Panel? | [[Implement_Operator_Auth]] · [[01_Dev_Environtment]] §4 |
 | Bagaimana data mengalir? | [[02_Data_Pipeline]] |
 | Bedanya Knowledge Base dan training? | [[03_Knowledge_Base]] §5 |
 
@@ -61,7 +62,9 @@
 ## 06. Sprint Board
 
 - [[TASKS|Sprint Kanban Board]] — papan task engineering.
-- [[00_Sprint_1_Completion_Notes|Catatan Penyelesaian Sprint 1]] — **apa yang benar-benar jadi, apa yang belum bisa diverifikasi, dan kenapa.**
+- [[00_Sprint_1_Completion_Notes|Catatan Penyelesaian Sprint 1]] — pipeline deteksi: apa yang jadi, apa yang belum bisa diverifikasi, dan kenapa.
+- [[00_Sprint_2_Completion_Notes|Catatan Penyelesaian Sprint 2]] — **auth operator, toolchain `uv`, dan verifikasi live dispatch WhatsApp.**
+- [[Implement_Operator_Auth|Catatan — Autentikasi Operator]] — kenapa sesi berupa row, kenapa `DASHBOARD_API_KEY` dihapus, risiko yang tersisa.
 - [[Open_Decisions_Carried_Forward|Keputusan Terbuka yang Dibawa ke Sprint Berikutnya]]
 
 ## 07. How to Run

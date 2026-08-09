@@ -46,7 +46,9 @@ Blok Recent Incidents dan Recent Alerts memakai prinsip yang sama — gateway me
 
 ---
 
-## 4. Yang belum aman: tidak ada auth operator
+## 4. ~~Yang belum aman: tidak ada auth operator~~ → **ditutup 2026-08-09**
+
+> **Pembaruan 2026-08-09.** Autentikasi operator sudah ada: login email + password, sesi server-side 8 jam, dan `require_operator` menjaga seluruh router Control Panel. `DASHBOARD_API_KEY` beserta `NEXT_PUBLIC_DASHBOARD_KEY` **dihapus** dari kode, compose, dan `.env.example` — bagian di bawah ini tinggal riwayat. Yang masih Planned: **RBAC**. Detail: [[Implement_Operator_Auth]].
 
 **Ini celah yang paling perlu diketahui dari task ini.** Autentikasi operator dan RBAC berstatus Planned (Fase 2), dan task ini tidak mencakupnya.
 

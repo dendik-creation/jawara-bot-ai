@@ -76,7 +76,7 @@ Yang tidak ada di `.env` diturunkan dari komponennya, dengan host `localhost` (p
 | `WAHA_API_URL` | `WAHA_PORT` | `http://localhost:3000` |
 | `ML_SERVICE_URL` | `ML_SERVICE_PORT` | `http://localhost:9000` |
 
-`WAHA_API_KEY`, `ML_SERVICE_API_KEY`, `USER_HASH_SALT`, `DASHBOARD_API_KEY`, `QDRANT_COLLECTION` terbaca langsung dari `.env` — tidak ada lagi kemungkinan salt berbeda antara backend lokal dan worker (beda salt = beda `user_hash` = row `user_subscriptions` tidak match).
+`WAHA_API_KEY`, `ML_SERVICE_API_KEY`, `USER_HASH_SALT`, `QDRANT_COLLECTION` terbaca langsung dari `.env` — tidak ada lagi kemungkinan salt berbeda antara backend lokal dan worker (beda salt = beda `user_hash` = row `user_subscriptions` tidak match).
 
 Environment variable asli tetap menang atas isi `.env`; itulah cara `docker-compose.yml` menyuntikkan hostname in-network (`postgres`, `redis`, `ml-service`). Untuk override satu nilai saja tanpa menyalin seluruh file, buat `backend/.env` — ia dibaca setelah `.env` root.
 
@@ -91,7 +91,13 @@ uv run python -m app.db.migrate               # apply schema PostgreSQL (idempot
 uv run python -m app.vector.qdrant_setup      # buat collection fact_knowledge_base + payload index
 uv run python -m app.scripts.seed_facts       # isi fact_sources + fact_items (data demo)
 uv run python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Service
+
+# Akun operator Control Panel — tanpa ini tidak ada yang bisa masuk ke dashboard.
+# Password diminta lewat prompt (tidak di-echo), atau dari env OPERATOR_PASSWORD.
+uv run python -m app.scripts.create_operator --email kamu@contoh.id --name "Nama Kamu"
 ```
+
+Tidak ada endpoint pendaftaran mandiri: Control Panel adalah konsol internal, dan yang bisa menjalankan perintah di atas sudah memegang kredensial database. Lupa password? `--reset-password` dengan email yang sama.
 
 `qdrant_setup` mencetak config live-nya untuk dicocokkan dengan tabel di [[02_VectorDB_Specifications]].
 
@@ -223,7 +229,9 @@ Port default Next.js dev server (`3000`) **bentrok** dengan host port WAHA (`300
 NEXT_PUBLIC_API_URL=http://localhost:8000 bun dev -- -p 3001
 ```
 
-Buka `http://localhost:3001` — Command Center. Layar kedua: `/system/service-health`.
+Buka `http://localhost:3001` — akan dialihkan ke `/login` selama belum ada sesi. Masuk dengan akun yang dibuat di §4, lalu Command Center terbuka. Layar kedua: `/system/service-health`.
+
+Sesi berumur 8 jam (`AUTH_SESSION_TTL_MINUTES`) dan tersimpan di `localStorage` browser. Salah password 5 kali dalam 5 menit menghasilkan `429` per (email, IP) — tunggu jendelanya lewat, atau `docker compose exec redis redis-cli --scan --pattern 'ratelimit:login:*'` lalu hapus key-nya saat dev.
 
 Kalau dashboard tampil tapi semua angka "belum tersedia", cek `CORS_ALLOW_ORIGINS` di backend memuat `http://localhost:3001`; browser akan memblokir responsnya secara diam-diam kalau tidak.
 

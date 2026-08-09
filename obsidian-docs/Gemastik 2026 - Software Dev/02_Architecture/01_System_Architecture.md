@@ -209,13 +209,13 @@ Keduanya menyuplai Risk Assessment; Security Policy yang memutuskan aksi akhir. 
 | Komponen | Status | Bukti / catatan |
 | :--- | :--- | :--- |
 | WAHA container | Implemented | `docker-compose.yml`, healthcheck + volume sesi |
-| FastAPI Gateway (intake) | Implemented | webhook, auth `X-Api-Key`, rate limit, health, orkestrasi pipeline, API Control Panel |
+| FastAPI Gateway (intake) | Implemented | webhook, auth `X-Api-Key`, rate limit, health, orkestrasi pipeline, API Control Panel di belakang sesi operator |
 | Redis (queue + rate limit + cache) | Implemented | `app/core/rate_limit.py`, `app/services/queue.py`, `app/core/cache.py` |
 | Celery Worker | Implemented | pipeline lengkap: preprocessing → rules → verifikasi → generate → dispatch → audit (`app/pipeline/orchestrator.py`) |
 | PostgreSQL | Partial | migrasi `001_init_schema.sql` dipakai penuh (`message_logs` terisi); tabel domain keamanan & AI/ML belum ada |
 | Qdrant | Implemented | collection + payload index + embedding knowledge terisi lewat ingestion |
 | ML Service | Partial | `ml-service/` ada: `embed`, `rag-query`, `generate`, `kb/upsert`, `health`, `ready`. `classify` menjawab `model_not_available` (belum ada model terlatih); `ocr` dan `train`/`evaluate` belum ada |
-| Next.js Control Panel | Partial | shell navigasi + Command Center + Service Health; layar lain belum ada, auth operator/RBAC belum ada |
+| Next.js Control Panel | Partial | login operator + shell sidebar + Command Center + Service Health; layar lain belum ada, RBAC belum ada |
 
 Rincian batasan tiap komponen: [[00_Sprint_1_Completion_Notes]].
 

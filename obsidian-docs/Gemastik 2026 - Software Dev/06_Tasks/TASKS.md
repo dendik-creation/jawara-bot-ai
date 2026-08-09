@@ -35,6 +35,9 @@ kanban-plugin: board
 - [x] [[Implement WhatsApp Response Sender]] @{2026-08-08}
 - [x] [[Create Audit Logging]] @{2026-08-08}
 - [x] [[Implement Command Center Dashboard]] @{2026-08-08}
+- [x] [[Implement_Operator_Auth]] @{2026-08-09}
+- [x] Satukan toolchain Python ke `uv` @{2026-08-09}
+- [x] Verifikasi live dispatch WhatsApp @{2026-08-09}
 
 
 

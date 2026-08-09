@@ -41,7 +41,7 @@ Semua item di bawah berstatus **Planned** kecuali disebutkan lain.
 | Security Policies | [[02_Security_Policies]] | Planned |
 | Detection Rules | [[03_Detection_Rules]] | Planned |
 | Alert Center | [[04_Alert_Center]] | Planned |
-| Audit Logs | [[05_Audit_Logs]] | Partial — `message_logs` sudah terisi tiap pesan; tabel audit aksi operator belum ada |
+| Audit Logs | [[05_Audit_Logs]] | Partial — `message_logs` sudah terisi tiap pesan; tabel audit aksi operator belum ada. Login sekarang tercatat (`operators.last_login_at` + baris `operator_sessions` berisi user agent dan IP), tapi itu jejak sesi, bukan jejak aksi |
 | Knowledge Base | [[03_Knowledge_Base]] | Partial — collection Qdrant terisi lewat ingestion `fact_items`; upload dokumen operator (parsing, chunking) belum ada |
 | Operator Feedback (Human-in-the-Loop) | [[04_Datasets_and_Operator_Feedback]] | Planned |
 | Dataset Management | [[04_Datasets_and_Operator_Feedback]] | Planned |
@@ -50,6 +50,8 @@ Semua item di bawah berstatus **Planned** kecuali disebutkan lain.
 | Model Evaluation | [[06_Model_Evaluation]] | Planned |
 | Model Registry | [[07_Model_Registry_and_Deployment]] | Planned |
 | Basic Service Health | [[08_Service_Health]] | Implemented — enam service diprobe gateway, layar Service Health ada |
+| Operator Authentication | [[06_Platform_Security_Requirements]] | Implemented — login email + password, sesi server-side 8 jam ([[Implement_Operator_Auth]]) |
+| Authorization / RBAC | [[07_Users_and_Risk]] | Planned — tidak ada role; setiap operator melihat seluruh panel |
 
 Fondasi MVP yang sudah **Implemented** di repo (bukan fitur produk, tapi prasyaratnya):
 
@@ -59,6 +61,12 @@ Fondasi MVP yang sudah **Implemented** di repo (bukan fitur produk, tapi prasyar
 - Migrasi schema PostgreSQL idempotent (`backend/app/db/`)
 - Bootstrap collection Qdrant + payload index (`backend/app/vector/qdrant_setup.py`)
 - Anonimisasi `user_hash` SHA-256 bersalt (`backend/app/core/hashing.py`)
+
+Ditambahkan 2026-08-09 ([[00_Sprint_2_Completion_Notes]]):
+
+- Autentikasi operator: tabel `operators` + `operator_sessions`, endpoint `/auth/login|logout|me`, gate `require_operator` di seluruh router Control Panel, halaman `/login` dan shell sidebar shadcn/ui
+- Toolchain Python disatukan ke `uv` (`pyproject.toml` + `uv.lock`, tanpa `requirements.txt`)
+- Dispatch balasan WhatsApp **terverifikasi live** ke sesi WAHA nyata
 
 Ditambahkan 2026-08-08 ([[00_Sprint_1_Completion_Notes]]):
 
@@ -124,7 +132,8 @@ Fase 1 — Pipeline deteksi ✅ sebagian besar selesai (2026-08-08)
 
 Fase 2 — Control Panel MVP  (sebagian selesai)
   ✅ Command Center, Service Health
-  ⬜ Auth + RBAC, Threat Monitoring, Message Inspection, WhatsApp Management
+  ✅ Autentikasi operator (email + password, sesi server-side)
+  ⬜ RBAC, Threat Monitoring, Message Inspection, WhatsApp Management
 
 Fase 3 — Operasi keamanan
   Incident Management, Alert Center, Audit Logs, Users & Risk, Policies UI

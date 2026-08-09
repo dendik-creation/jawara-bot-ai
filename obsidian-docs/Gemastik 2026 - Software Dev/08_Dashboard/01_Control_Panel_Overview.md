@@ -2,9 +2,11 @@
 
 Control Panel JAWARA adalah **Control & Monitoring Center** untuk operator keamanan, bukan sekadar dashboard analitik. Fungsinya: melihat apa yang terjadi, memahami kenapa sistem memutuskan sesuatu, dan mengambil tindakan.
 
-> **Status:** Partial (2026-08-08). Shell navigasi di §2 sudah dibangun, dengan dua layar hidup: **Command Center** (termasuk Live Activity) dan **System → Service Health**. Entri navigasi yang layarnya belum ada dirender non-aktif dengan badge "belum tersedia" — bukan tautan ke halaman kosong, dan bukan disembunyikan.
+> **Status:** Partial (2026-08-09). Shell navigasi di §2 sudah dibangun di atas komponen sidebar shadcn/ui (bisa diciutkan jadi ikon), dengan dua layar hidup: **Command Center** (termasuk Live Activity) dan **System → Service Health**. Entri navigasi yang layarnya belum ada dirender non-aktif dengan badge "belum tersedia" — bukan tautan ke halaman kosong, dan bukan disembunyikan.
 >
-> **Belum ada autentikasi operator maupun RBAC.** Sementara ini `DASHBOARD_API_KEY` mengunci endpoint Control Panel bila diisi. Itu mengautentikasi deployment, bukan orang; gateway tidak boleh diekspos ke internet sebelum Fase 2 ([[Implement_Command_Center_Dashboard]]).
+> **Autentikasi operator sudah ada** (2026-08-09): login email + password di `/login`, sesi 8 jam, logout mencabut sesi di server. Seluruh endpoint Control Panel menuntut token sesi — `DASHBOARD_API_KEY` dihapus. Detail: [[Implement_Operator_Auth]].
+>
+> **RBAC belum ada.** Setiap operator yang bisa masuk melihat seluruh panel. Itu batas scope Fase 2, bukan kelalaian — role ada di Fase 3 ([[07_Users_and_Risk]]).
 
 ---
 

@@ -30,7 +30,7 @@ Single Git repository, root as the only `.git`. Monorepo, not a multi-repo submo
 | `postgres` | Primary relational store — message logs, fact knowledge, subscriptions |
 | `qdrant` | Vector DB — knowledge embeddings, semantic/RAG retrieval |
 | `redis` | Celery broker + rate limiting + threat-intel cache + transient state |
-| `frontend-dashboard` | Next.js Control Panel — Command Center, Service Health |
+| `frontend-dashboard` | Next.js Control Panel — operator login, Command Center, Service Health |
 
 `ml-service` is health-checked on **readiness** (`/v1/ready`, models loaded), not liveness — an orchestrator that routes traffic to a container still loading weights produces first requests that fail for no visible reason.
 
@@ -62,6 +62,10 @@ docker exec jawara-gateway python -m app.db.migrate
 docker exec jawara-gateway python -m app.vector.qdrant_setup
 docker exec jawara-gateway python -m app.scripts.seed_facts
 docker exec jawara-gateway python -m app.scripts.ingest_knowledge
+
+# Control Panel account — nothing can sign in until this exists.
+docker exec -it jawara-gateway python -m app.scripts.create_operator \
+  --email you@example.com --name "Your Name"
 ```
 
 All services have health checks; `api-gateway` and `frontend-dashboard` wait on their dependencies via `condition: service_healthy`.

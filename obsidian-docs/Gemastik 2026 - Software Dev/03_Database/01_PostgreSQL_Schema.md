@@ -10,7 +10,8 @@ Arsitektur target menempatkan domain berikut di PostgreSQL. Sebagian besar **bel
 
 | Domain data | Status | Catatan |
 | :--- | :--- | :--- |
-| Users, roles, permissions | Planned | Prasyarat auth + RBAC ([[07_Users_and_Risk]]) |
+| Operator accounts + sesi login | Implemented | `operators` + `operator_sessions` (migrasi 002). Email + password, sesi berumur pendek. **Tanpa role/permission** — RBAC tetap Planned |
+| Roles, permissions | Planned | Prasyarat RBAC ([[07_Users_and_Risk]]) |
 | WhatsApp sessions | Planned | Metadata sesi; state hidupnya tetap milik WAHA |
 | Threats | Planned | [[03_Threat_Monitoring]] |
 | Message metadata | Implemented | `message_logs` ada **dan terisi** oleh worker setelah setiap pesan diproses ([[Create Audit Logging]]) |
@@ -26,6 +27,8 @@ Arsitektur target menempatkan domain berikut di PostgreSQL. Sebagian besar **bel
 | Operator feedback | Planned | [[04_Datasets_and_Operator_Feedback]] |
 | Fact items / fact sources | Implemented | Basis pengetahuan fakta generasi pertama |
 | User subscriptions | Implemented | Pendaftaran chat/grup, identitas ter-hash |
+
+**Catatan terminologi kedua — "operator" vs "user":** tabel login sengaja bernama `operators`, bukan `users`. Di schema ini `user_hash` sudah berarti **pengguna akhir WhatsApp**, yang anonim by design dan tidak pernah punya akun. Dua arti "user" dalam satu schema pada akhirnya akan bertemu di satu query.
 
 **Catatan terminologi:** `category_enum` saat ini memuat kategori pipeline generasi pertama (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`). Kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) belum dipetakan ke enum ini — **keputusan terbuka**: perluas enum, ganti dengan tabel referensi, atau pertahankan dua level (intent pipeline vs kategori ancaman).
 
@@ -95,7 +98,33 @@ erDiagram
         int response_latency_ms
         timestamptz created_at
     }
+
+    OPERATORS ||--o{ OPERATOR_SESSIONS : owns
+
+    OPERATORS {
+        uuid id PK
+        varchar email UK
+        varchar full_name
+        text password_hash
+        boolean is_active
+        timestamptz last_login_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    OPERATOR_SESSIONS {
+        uuid id PK
+        uuid operator_id FK
+        char token_hash UK
+        timestamptz issued_at
+        timestamptz expires_at
+        timestamptz revoked_at
+        text user_agent
+        inet ip_address
+    }
 ```
+
+`OPERATORS` berdiri terpisah dari `USER_SUBSCRIPTIONS` dan tidak punya relasi ke sana — memang tidak boleh ada. Operator adalah manusia yang membuka Control Panel; `user_hash` adalah pengguna WhatsApp yang identitasnya sengaja tidak pernah disimpan.
 
 ---
 
@@ -226,8 +255,45 @@ CREATE TABLE message_logs (
 );
 
 -- ==========================================================
+-- 6. Operators (akun Control Panel) & Sesi Login
+-- Migrasi 002. Bukan `users`: lihat catatan terminologi di §0.
+-- ==========================================================
+CREATE TABLE operators (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    full_name VARCHAR(120) NOT NULL,
+    password_hash TEXT NOT NULL,          -- bcrypt; TEXT karena prefix algoritma + cost ikut disimpan
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Unik pada lower(email): alamat email case-insensitive di dunia nyata, dan dua
+-- akun yang beda hanya di kapitalisasi adalah trik pengambilalihan akun.
+CREATE UNIQUE INDEX idx_operators_email_lower ON operators (lower(email));
+
+CREATE TRIGGER update_operators_modtime
+    BEFORE UPDATE ON operators
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_updated_at_column();
+
+CREATE TABLE operator_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    operator_id UUID NOT NULL REFERENCES operators(id) ON DELETE CASCADE,
+    token_hash CHAR(64) UNIQUE NOT NULL,  -- SHA-256 token, bukan tokennya
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    user_agent TEXT,
+    ip_address INET
+);
+
+-- ==========================================================
 -- Indexing Strategy
 -- ==========================================================
+CREATE INDEX idx_operator_sessions_operator ON operator_sessions(operator_id);
+CREATE INDEX idx_operator_sessions_expires ON operator_sessions(expires_at);
 CREATE INDEX idx_message_logs_created_at ON message_logs(created_at DESC);
 CREATE INDEX idx_message_logs_intent ON message_logs(detected_intent);
 CREATE INDEX idx_message_logs_user_hash ON message_logs(user_hash);
@@ -239,7 +305,7 @@ CREATE INDEX idx_fact_items_category ON fact_items(category) WHERE is_active = T
 
 ## Implementasi & Migrasi
 
-DDL di atas adalah *source of truth*. Bentuk yang benar-benar dijalankan ada di `backend/app/db/migrations/001_init_schema.sql`, di-apply oleh `python -m app.db.migrate` (lihat [[Design PostgreSQL Schema]]).
+DDL di atas adalah *source of truth*. Bentuk yang benar-benar dijalankan ada di `backend/app/db/migrations/` — `001_init_schema.sql` (pipeline pesan) dan `002_operator_auth.sql` (akun + sesi operator) — di-apply oleh `uv run python -m app.db.migrate` (lihat [[Design PostgreSQL Schema]]).
 
 Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
 
@@ -248,6 +314,8 @@ Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
 | `fraud_blacklists` **tidak** dibuat | Verifikasi penipuan finansial adalah **Post-MVP**. Tabel kosong hanya mengiklankan kemampuan yang belum ada. Ada test yang memastikan tabel ini tetap absen. |
 | Semua statement di-guard (`IF NOT EXISTS`, `DO $$ … EXCEPTION WHEN duplicate_object`) | Migrasi harus bisa diulang di CI dan di database yang setengah teraplikasi. Enum tidak punya `CREATE TYPE IF NOT EXISTS`, jadi dibungkus blok `DO`. |
 | Ada tabel tambahan `schema_migrations` | Ledger versi migrasi (`version`, `checksum`, `applied_at`). Bukan bagian dari model domain. |
+
+**Kenapa sesi disimpan sebagai row, bukan JWT:** token bertanda tangan tidak bisa dicabut tanpa denylist, dan denylist adalah tabel sesi yang menyamar. Satu lookup terindeks per request membeli logout yang benar-benar mencabut, plus "nonaktifkan akun ini sekarang" yang berlaku di request berikutnya. Yang disimpan hanya SHA-256 tokennya — dump database tidak membagikan sesi hidup. SHA-256 cukup (bukan bcrypt) karena token adalah 32 byte acak: tidak ada yang bisa ditebak, dan hash lambat per request hanya menambah latensi.
 
 **Konvensi `user_hash`:** `sha256(USER_HASH_SALT + ':' + nomor_atau_group_id)`, hex lowercase 64 karakter — implementasinya di `backend/app/core/hashing.py`. Salt tunggal level aplikasi (bukan per-row), karena `user_hash` harus reproducible dari chat ID mentah supaya bisa jadi lookup key antar pesan. Ganti salt = seluruh `user_subscriptions` lama tidak match lagi dan `message_logs`-nya ikut terhapus lewat cascade.
 

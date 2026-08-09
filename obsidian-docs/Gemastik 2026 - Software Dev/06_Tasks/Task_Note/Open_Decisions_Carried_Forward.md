@@ -14,8 +14,11 @@ Satu keputusan terbuka ditutup di sprint ini (provider LLM). Sisanya masih terbu
 
 ## 1b. Ditutup 2026-08-09
 
+Indeks sprint: [[00_Sprint_2_Completion_Notes]].
+
 | Keputusan | Hasil |
 | :--- | :--- |
+| Auth Control Panel | **Email + password, sesi server-side, tanpa RBAC.** `DASHBOARD_API_KEY` dihapus seluruhnya (config, compose, build arg frontend, dokumen). Alasan tiap pilihan di [[Implement_Operator_Auth]] |
 | Toolchain dependency Python | **`uv`, satu-satunya.** `backend/` dan `ml-service/` masing-masing punya `pyproject.toml` (dependency terpin) + `uv.lock`; `requirements.txt` / `requirements-dev.txt` dihapus dari keduanya. Kedua `Dockerfile` menyalin biner `uv` terpin dari `ghcr.io/astral-sh/uv:0.12.2` lalu `uv sync --locked --no-dev` ke interpreter sistem (`UV_PROJECT_ENVIRONMENT=/usr/local`), jadi `uvicorn`/`celery`/healthcheck `python -c` tetap jalan tanpa aktivasi venv. Base image naik dari `python:3.11-slim` ke `python:3.14-slim` supaya `requires-python = ">=3.14"` (yang sudah ada sejak awal di `backend/pyproject.toml`) benar-benar dipenuhi image, bukan hanya venv dev. Stub `backend/src/backend/` bawaan `uv init` dihapus — kode aplikasi ada di `backend/app/`, dan `[tool.uv] package = false` menegaskan service ini aplikasi, bukan library |
 
 ---
@@ -44,7 +47,7 @@ Masih terbuka ([[01_PostgreSQL_Schema]] §0, [[Build_Intent_Router]] §5).
 
 ## 3. Terbuka dan baru — muncul dari implementasi
 
-### 3.1 Anggaran latensi vs timeout kirim WAHA
+### 3.1 Anggaran latensi vs timeout kirim WAHA — **sekarang ada datanya**
 
 `WAHA_SEND_TIMEOUT_SECONDS` default 5 detik, sementara target end-to-end adalah 3 detik. Satu percobaan kirim yang lambat sudah melampaui seluruh anggaran.
 
@@ -53,11 +56,28 @@ Dua opsi:
 1. Turunkan timeout kirim ke ~2 detik dan terima bahwa jaringan lambat berarti gagal kirim.
 2. Definisikan ulang KPI: 3 detik diukur sampai **dispatch dimulai**, bukan sampai WAHA membalas.
 
+Pengukuran live 2026-08-09 ([[00_Sprint_2_Completion_Notes]] §3) menambah fakta yang memberatkan opsi 1: dua percobaan pertama ke sesi WhatsApp yang baru idle habis waktu di 5 detik, dua kali, sebelum percobaan ketiga berhasil — dan yang berhasil pun 3.571 ms, di atas target. Panggilan langsung ke WAHA dari host 0,11 detik, jadi bukan kodenya. Timeout 2 detik akan membuat pesan pertama setelah idle selalu gagal terkirim.
+
+Opsi ketiga yang muncul dari data itu: pertahankan timeout 5 detik, tapi hangatkan sesi (ping berkala) supaya biaya bangun tidak dibayar oleh pesan pengguna pertama.
+
 Detail pengukuran di [[Implement_WhatsApp_Response_Sender]] §3.
 
-### 3.2 Auth Control Panel sebelum ekspos publik
+### 3.2 ~~Auth Control Panel sebelum ekspos publik~~ → **ditutup 2026-08-09**
 
-`DASHBOARD_API_KEY` adalah tambalan, bukan RBAC. Gateway tidak boleh diekspos ke internet sebelum auth operator ada ([[Implement_Command_Center_Dashboard]] §4).
+Autentikasi operator (email + password, sesi server-side) sudah ada dan `DASHBOARD_API_KEY` dihapus — lihat §1c dan [[Implement_Operator_Auth]].
+
+Yang **tetap** menghalangi ekspos publik, dan bukan lagi soal auth: belum ada RBAC, belum ada TLS di compose (§7 [[06_Platform_Security_Requirements]]), dan port PostgreSQL/Redis/Qdrant masih dipublish untuk dev hybrid.
+
+### 3.6 Penyimpanan token sesi di browser — **baru**
+
+Token sesi operator disimpan di `localStorage`, jadi XSS di Control Panel bisa membacanya. Mitigasi sekarang expiry 8 jam + pencabutan saat logout; itu memperkecil jendela, bukan menutup lubang.
+
+Alternatifnya cookie `httpOnly`, yang menuntut salah satu dari:
+
+1. Gateway dan panel satu origin (reverse proxy di depan keduanya), atau
+2. Route handler Next.js yang mem-proxy setiap panggilan Control Panel supaya cookie-nya milik origin panel.
+
+Keduanya perubahan arsitektur, bukan penggantian satu modul — walau di sisi frontend dampaknya terbatas ke `lib/session.ts`, satu-satunya tempat yang tahu kunci penyimpanan.
 
 ### 3.3 Throttle kuota threat intel lintas worker
 

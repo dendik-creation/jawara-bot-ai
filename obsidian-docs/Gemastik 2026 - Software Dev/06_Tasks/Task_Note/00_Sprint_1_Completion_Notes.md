@@ -88,7 +88,7 @@ Jumlah test: **154 lulus** (`backend/`, termasuk integration dengan PostgreSQL/R
 | Engine `FINANCIAL_FRAUD` | Post-MVP. Router mengklasifikasi kategorinya, lalu route ke `unsupported` — bukan diam-diam dipetakan ke engine lain |
 | Analisis statik APK | Opsional / Future ([[06_Optional_APK_Inspector]]). Lampiran `.apk` tetap dideteksi dan diperingatkan |
 | Tabel threats / incidents / alerts | Bukan bagian dari 10 task ini. Panel terkait di dashboard melaporkan `available: false` |
-| Auth operator + RBAC | Fase 2. Sementara ada `DASHBOARD_API_KEY` — lihat [[Implement_Command_Center_Dashboard]] |
+| Auth operator + RBAC | Fase 2. Sementara ada `DASHBOARD_API_KEY` — lihat [[Implement_Command_Center_Dashboard]]. **Sudah tidak berlaku sejak 2026-08-09:** auth operator ada, `DASHBOARD_API_KEY` dihapus, RBAC tetap Planned ([[Implement_Operator_Auth]]) |
 | Fallback Postgres full-text saat Qdrant mati | Task menyebutnya "defer unless time allows" |
 
 ---

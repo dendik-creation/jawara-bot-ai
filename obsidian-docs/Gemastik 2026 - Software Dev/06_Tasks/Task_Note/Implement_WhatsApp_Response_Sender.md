@@ -22,7 +22,22 @@ Alasan tidak melempar: pipeline harus tetap menulis baris audit. Balasan yang ti
 
 ---
 
-## 2. Yang tidak bisa diverifikasi: pengiriman ke sesi WhatsApp nyata
+## 2. ~~Yang tidak bisa diverifikasi~~ → **terverifikasi live 2026-08-09**
+
+> **Pembaruan 2026-08-09.** Sesi WAHA `XL__087712032005` sudah ter-pairing dan berstatus `WORKING`. Pesan uji melewati seluruh pipeline dan **balasannya benar-benar terkirim ke WhatsApp**:
+>
+> ```json
+> {"message":"pipeline complete","waha_message_id":"verify_wa_233039",
+>  "intent":"HEALTH_HOAX","risk":"HIGH","similarity_score":0.9169,
+>  "response_dispatched":true,"response_latency_ms":3571,
+>  "logged":true,"degradations":[]}
+> ```
+>
+> Kriteria *"Response delivered to the correct chatId"* ✅ terpenuhi. Detail lengkap: [[00_Sprint_2_Completion_Notes]] §3.
+>
+> Catatan yang tidak boleh hilang: **dua percobaan pertama tetap timeout** (2 × 5 detik) sebelum yang ketiga berhasil, padahal `POST /api/sendText` langsung ke WAHA dari host selesai dalam 0,11 detik. Biaya bangun sesi WhatsApp yang baru idle lebih besar dari `WAHA_SEND_TIMEOUT_SECONDS`. Lihat §3.
+
+Catatan asli sprint sebelumnya, dipertahankan sebagai riwayat:
 
 **Belum ada sesi WAHA yang di-pairing** di environment ini. Container `waha` sehat (`/ping` menjawab), tapi tidak ada perangkat WhatsApp yang tersambung.
 
@@ -66,6 +81,10 @@ Penyebabnya bukan pipeline analisis. Rinciannya:
 Artinya jalur analisis sudah jauh di bawah anggaran; yang membakar waktu adalah `WAHA_SEND_TIMEOUT_SECONDS=5` dikali dua percobaan pada sesi yang tidak ada.
 
 Konsekuensi yang perlu diputuskan sebelum produksi: **timeout kirim 5 detik saja sudah melampaui seluruh anggaran 3 detik.** Pilihan yang masuk akal — turunkan `WAHA_SEND_TIMEOUT_SECONDS` ke ~2 detik, atau nyatakan bahwa target 3 detik diukur sampai *dispatch dimulai*, bukan sampai WAHA membalas. Keputusan ini belum diambil; lihat [[Open_Decisions_Carried_Forward]].
+
+**Pembaruan 2026-08-09 — pengiriman yang berhasil pun masih di atas target.** Dengan sesi nyata dan dispatch benar-benar terkirim, `response_latency_ms` = **3.571 ms**, jadi `WARNING` tetap muncul. Rincian yang berubah dari tabel di atas: yang membakar waktu bukan lagi "sesi yang tidak ada", melainkan hop pertama ke sesi yang baru idle — percobaan berikutnya ke sesi yang sudah hangat selesai dalam ratusan milidetik.
+
+Itu mematikan opsi "turunkan timeout ke ~2 detik": pesan pertama setelah idle akan selalu gagal terkirim. Opsi yang tersisa: definisikan ulang KPI sampai dispatch dimulai, atau hangatkan sesi secara berkala supaya biaya bangun tidak ditanggung pesan pengguna.
 
 ---
 

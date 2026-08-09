@@ -69,3 +69,5 @@ Frontend: shell navigasi sesuai [[01_Control_Panel_Overview]] §2 (tanpa entri A
 `extracted_text` tidak pernah di-`SELECT`. Metrik tanpa data dirender "belum tersedia", bukan `0`. Incidents dan alerts melaporkan `available: false` dengan alasannya.
 
 Celah yang harus diketahui: **belum ada auth operator/RBAC** — hanya `DASHBOARD_API_KEY` sebagai tambalan. Jangan ekspos gateway ke internet sebelum Fase 2. Detail: [[Implement_Command_Center_Dashboard]].
+
+> **Pembaruan 2026-08-09:** auth operator sudah ada dan `DASHBOARD_API_KEY` dihapus ([[Implement_Operator_Auth]]). RBAC tetap belum ada.

@@ -50,8 +50,10 @@ class FakeMlClient:
         self._generate_error = generate_error
         self._message = message
         self.generate_calls: list[dict] = []
+        self.rag_calls: list[str] = []
 
     async def rag_query(self, request_id, query, category=None, **_):
+        self.rag_calls.append(query)
         if self._rag_error:
             raise self._rag_error
         return MlResponse(request_id, {"matches": self._matches}, "hash-embed-v0")
@@ -72,13 +74,19 @@ class FakeMlClient:
 
 
 class FakeWaha:
-    def __init__(self, delivered: bool = True):
+    def __init__(self, delivered: bool = True, bot_ids: frozenset[str] = frozenset()):
         self.delivered = delivered
         self.sent: list[tuple[str, str]] = []
+        self.quoted: list[str | None] = []
+        self._bot_ids = bot_ids
 
-    async def send_text(self, chat_id, text, session="default"):
+    async def send_text(self, chat_id, text, session="default", reply_to=None):
         self.sent.append((chat_id, text))
+        self.quoted.append(reply_to)
         return SendResult(delivered=self.delivered, chat_id=chat_id, attempts=1, error="" if self.delivered else "timeout")
+
+    async def session_identity(self, session):
+        return self._bot_ids
 
 
 class FakeRedis:
@@ -211,12 +219,80 @@ async def test_audit_row_carries_intent_risk_latency_and_hashed_user(rig):
     assert len(entry.user_hash) == 64 and "628111" not in entry.user_hash
 
 
-async def test_group_chat_is_recorded_as_group(rig):
-    state = rig(ml=FakeMlClient(matches=[KB_MATCH]))
+GROUP_ID = "62811-1234@g.us"
+BOT_IDS = frozenset({"6287712032005@c.us"})
+
+
+def group_job(text: str = HOAX_TEXT, **payload_overrides) -> MessageJob:
+    return job(text, id="x1", **{"from": GROUP_ID, "participant": "628999@c.us", **payload_overrides})
+
+
+async def test_group_chat_is_recorded_as_group_when_the_bot_is_addressed(rig):
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH]), waha=FakeWaha(bot_ids=BOT_IDS))
+
     await orchestrator.process_message_job(
-        job(id="x1", **{"from": "62811-1234@g.us"}), {}, SETTINGS
+        group_job(mentionedIds=["6287712032005@c.us"]), {}, SETTINGS
     )
+
     assert state["rows"][0].chat_type == "GROUP"
+
+
+async def test_group_message_the_bot_was_not_addressed_in_is_dropped_before_any_work(rig):
+    """No reply, no ML call, and no audit row holding what the group said."""
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(group_job(), {}, SETTINGS)
+
+    assert result["status"] == "ignored_group_not_addressed"
+    assert state["waha"].sent == []
+    assert state["rows"] == []
+    assert ml.rag_calls == []
+
+
+async def test_group_reply_quotes_the_message_that_summoned_the_bot(rig):
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH]), waha=FakeWaha(bot_ids=BOT_IDS))
+
+    await orchestrator.process_message_job(
+        group_job(mentionedIds=["6287712032005@c.us"]), {}, SETTINGS
+    )
+
+    assert state["waha"].quoted == ["x1"]
+
+
+async def test_direct_chat_reply_is_not_quoted(rig):
+    """Nothing to disambiguate in a one-to-one chat; the quote would be clutter."""
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH]), waha=FakeWaha(bot_ids=BOT_IDS))
+
+    await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert state["waha"].quoted == [None]
+
+
+async def test_bot_mention_is_not_analysed_as_message_content(rig):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    await orchestrator.process_message_job(
+        group_job(text=f"@6287712032005 {HOAX_TEXT}", mentionedIds=["6287712032005@c.us"]),
+        {},
+        SETTINGS,
+    )
+
+    assert "6287712032005" not in ml.generate_calls[0]["user_text"]
+
+
+async def test_bare_mention_answers_with_instructions_instead_of_silence(rig):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(
+        group_job(text="@6287712032005", mentionedIds=["6287712032005@c.us"]), {}, SETTINGS
+    )
+
+    assert result["status"] == "mention_without_content"
+    assert state["waha"].sent[0][1] == orchestrator.EMPTY_MENTION_REPLY
+    assert ml.generate_calls == []  # nothing to analyse, so nothing is generated
 
 
 async def test_dispatch_failure_is_recorded_and_still_audited(rig):

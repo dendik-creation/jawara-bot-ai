@@ -190,6 +190,10 @@
   },
   "active": "0f85e219069fa589",
   "lastOpenFiles": [
+    "07_How_to_Run/01_Dev_Environtment.md.tmp.13852.bcb40bd87264",
+    "04_AI_and_ML/03_Knowledge_Base.md",
+    "03_Database/02_VectorDB_Specifications.md",
+    "03_Database/01_PostgreSQL_Schema.md",
     "07_How_to_Run/02_Prod_Environtment.md.tmp.13852.deab63cfb274",
     "02_Architecture/01_System_Architecture.md.tmp.13852.81d30725589f",
     "02_Architecture/01_System_Architecture.md.tmp.13852.4382bc76894f",
@@ -201,7 +205,6 @@
     "06_Tasks/Task_Detail/Implement Command Center Dashboard.md.tmp.13852.bb00043a766a",
     "06_Tasks/Task_Note/Implement_Command_Center_Dashboard.md.tmp.13852.34771b63404b",
     "06_Tasks/Task_Note/Implement_WhatsApp_Response_Sender.md.tmp.13852.e32232a44fd0",
-    "06_Tasks/Task_Note/Implement_WhatsApp_Response_Sender.md.tmp.13852.a3315d109e92",
     "06_Tasks/Task_Note/00_Sprint_2_Completion_Notes.md",
     "06_Tasks/Task_Note/Implement_Operator_Auth.md",
     "04_AI_and_ML/07_Model_Registry_and_Deployment.md",
@@ -209,7 +212,6 @@
     "06_Tasks/Task_Detail/Implement Celery Workers.md",
     "04_AI_and_ML/05_Training_Jobs.md",
     "04_AI_and_ML/04_Datasets_and_Operator_Feedback.md",
-    "04_AI_and_ML/03_Knowledge_Base.md",
     "04_AI_and_ML/02_ML_Control_Center_Overview.md",
     "04_AI_and_ML/01_LLM_System_Prompt.md",
     "01_Overview/04_How_it_Works.md",
@@ -224,8 +226,6 @@
     "06_Tasks/TASKS.md",
     "06_Tasks/Task_Note/00_Sprint_1_Completion_Notes.md",
     "06_Tasks/Task_Note/Build_Intent_Router.md",
-    "06_Tasks/Task_Note/Build_Text_Verification_Pipeline.md",
-    "06_Tasks/Task_Note/Create_Audit_Logging.md",
     "Untitled.canvas"
   ]
 }

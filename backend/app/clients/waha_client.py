@@ -21,6 +21,11 @@ from app.core.config import Settings, get_settings
 
 logger = logging.getLogger("app.clients.waha")
 
+# session name → JIDs that session answers to. Populated on first use per worker
+# process; cleared by restarting the worker, which is also what re-pairing a
+# session requires.
+_IDENTITY_CACHE: dict[str, frozenset[str]] = {}
+
 
 @dataclass(frozen=True)
 class SendResult:
@@ -39,14 +44,31 @@ class WahaClient:
     def _headers(self) -> dict[str, str]:
         return {"X-Api-Key": self._settings.waha_api_key, "Content-Type": "application/json"}
 
-    async def send_text(self, chat_id: str, text: str, session: str = "default") -> SendResult:
-        """Send one reply. Never raises — delivery failure is data, not an exception."""
+    async def send_text(
+        self,
+        chat_id: str,
+        text: str,
+        session: str = "default",
+        reply_to: str | None = None,
+    ) -> SendResult:
+        """Send one reply. Never raises — delivery failure is data, not an exception.
+
+        `reply_to` quotes the message being answered. In a busy group a bare
+        reply is unattributable — it is not clear which of the last twenty
+        messages the bot is talking about. If WAHA rejects the field (older
+        build, unsupported engine), the send is retried once without it: a
+        delivered answer without the quote beats no answer.
+        """
         url = f"{self._settings.waha_api_url.rstrip('/')}/api/sendText"
-        body = {"session": session, "chatId": chat_id, "text": text}
+        body: dict[str, object] = {"session": session, "chatId": chat_id, "text": text}
+        if reply_to:
+            body["reply_to"] = reply_to
         attempts = max(1, self._settings.waha_send_max_attempts)
         last_error = ""
 
-        for attempt in range(1, attempts + 1):
+        attempt = 0
+        while attempt < attempts:
+            attempt += 1
             try:
                 async with httpx.AsyncClient(timeout=self._settings.waha_send_timeout_seconds) as client:
                     response = await client.post(url, json=body, headers=self._headers)
@@ -64,6 +86,19 @@ class WahaClient:
                     )
                 last_error = f"http_{response.status_code}"
                 if response.status_code < 500:
+                    if "reply_to" in body:
+                        # The quote is the only optional part of this request, so
+                        # it is the first suspect for a 4xx. Drop it and try
+                        # again rather than losing the answer — and do not spend
+                        # a retry on it, or a single-attempt budget would turn a
+                        # rejected quote into an undelivered reply.
+                        logger.warning(
+                            "waha rejected send with reply_to, retrying unquoted",
+                            extra={"chat_id": chat_id, "status": response.status_code},
+                        )
+                        body.pop("reply_to")
+                        attempt -= 1
+                        continue
                     logger.error(
                         "waha rejected send, not retrying",
                         extra={"chat_id": chat_id, "status": response.status_code, "attempt": attempt},
@@ -112,6 +147,44 @@ class WahaClient:
             for session in sessions
             if isinstance(session, dict)
         ]
+
+    async def session_identity(self, session: str) -> frozenset[str]:
+        """The JIDs this session answers to.
+
+        A WhatsApp account now has two: the phone-number JID (`62…@c.us`) and
+        its LID twin (`249…@lid`). A mention can carry either, so both are
+        needed to recognise "the bot was addressed" — see
+        `app/pipeline/group_policy.py`.
+
+        Cached per process: it changes only when the session is re-paired, and
+        it is consulted for every group message. Configured IDs
+        (`BOT_WHATSAPP_IDS`) are merged in, which is also the escape hatch when
+        WAHA cannot be asked.
+        """
+        configured = frozenset(self._settings.bot_whatsapp_id_list)
+        cached = _IDENTITY_CACHE.get(session)
+        if cached is not None:
+            return cached | configured
+
+        url = f"{self._settings.waha_api_url.rstrip('/')}/api/sessions/{session}"
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.waha_send_timeout_seconds) as client:
+                response = await client.get(url, headers=self._headers)
+            if response.status_code >= 400:
+                raise ValueError(f"http_{response.status_code}")
+            me = (response.json() or {}).get("me") or {}
+        except Exception:  # noqa: BLE001
+            # Not cached: a transient failure must not pin the bot as nameless
+            # for the life of the worker.
+            logger.warning("waha session identity unavailable", extra={"session": session}, exc_info=True)
+            return configured
+
+        identity = frozenset(
+            value for value in (me.get("id"), me.get("lid")) if isinstance(value, str) and value
+        )
+        _IDENTITY_CACHE[session] = identity
+        logger.info("waha session identity resolved", extra={"session": session, "ids": sorted(identity)})
+        return identity | configured
 
     async def is_reachable(self) -> bool:
         """`/ping` is the only unauthenticated WAHA route (see the compose healthcheck)."""

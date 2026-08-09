@@ -13,7 +13,8 @@ app/
   core/               config, security (webhook key + operator gate), passwords,
                       logging, rate limiter, redis client, cache, hashing
   db/                 SQL migrations + runner
-  pipeline/           normalizer, url_extractor, intent_router, url_safety, orchestrator
+  pipeline/           normalizer, url_extractor, intent_router, url_safety,
+                      group_policy (may the bot answer here?), orchestrator
   schemas/            pydantic models (webhook payload, queue envelope)
   scripts/            seed_facts, ingest_knowledge, create_operator
   services/           queue producer, message_log (audit), dashboard, health probes,
@@ -73,6 +74,12 @@ Integration tests skip themselves when Postgres/Redis/Qdrant are unreachable, so
   queue to worker.
 - **The gateway never imports worker task functions.** Jobs are dispatched by name
   (`celery_app.send_task`) so ML dependencies stay out of the request path.
+- **In a group, the bot speaks only when spoken to.** `pipeline/group_policy.py`
+  decides: a group message that does not mention or reply to the bot is dropped
+  before any ML call and before any audit row — so the system reads what it is
+  asked to read, not everything said in the room. A one-to-one chat always gets
+  an answer. The gate fails *silent*: if the bot's own JIDs cannot be resolved,
+  it stays quiet rather than replying to everything.
 - **Nothing slow goes in the webhook handler.** OCR/RAG/LLM work belongs in the
   worker; the ack budget is 200ms.
 - **No inference code lives here.** Embeddings, retrieval and generation belong to

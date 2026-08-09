@@ -25,7 +25,7 @@ from app.clients.ml_client import MlClient, MlServiceError
 from app.clients.waha_client import WahaClient
 from app.core.config import Settings, get_settings
 from app.core.hashing import hash_user_identifier
-from app.pipeline import intent_router
+from app.pipeline import group_policy, intent_router
 from app.pipeline.categories import Category, InputType, RiskLevel, Verdict, worst_risk
 from app.pipeline.normalizer import normalize_text
 from app.pipeline.url_extractor import extract_urls
@@ -38,6 +38,17 @@ logger = logging.getLogger("app.pipeline.orchestrator")
 # Events that carry a user message. `session.status` and friends arrive on the
 # same webhook and must not be run through detection.
 MESSAGE_EVENTS = frozenset({"message", "message.any"})
+
+# Answer to a bare mention. Fixed text, not LLM-generated: there is nothing to
+# analyse, and a generated reply to an empty prompt is where a chatbot starts
+# making things up.
+EMPTY_MENTION_REPLY = (
+    "Halo! 👋 Saya JAWARA, asisten pemeriksa hoaks dan penipuan.\n\n"
+    "Silakan sebut saya sambil menyertakan pesannya, misalnya:\n"
+    "• Balas (reply) pesan yang mencurigakan, lalu sebut saya\n"
+    "• Atau tulis: @JAWARA tolong cek kabar ini ...\n\n"
+    "Saya bisa memeriksa klaim kesehatan, link mencurigakan, dan file APK."
+)
 
 # A knowledge-base verdict is a statement about the claim, so it maps directly
 # onto risk. UNVERIFIED is MEDIUM, never LOW: "no one has checked this" is not
@@ -150,6 +161,44 @@ async def process_message_job(
         outcome.status = "ignored_empty_body"
         return outcome.as_dict()
 
+    # --- stage 3b: may the bot speak here? -------------------------------
+    # Decided before any analysis, deliberately. A group message the bot was not
+    # addressed in costs no ML call, and — more importantly — leaves no
+    # `extracted_text` row: the system reads what it is asked to read, not
+    # everything said in the room.
+    bot_ids = (
+        await WahaClient(settings).session_identity(message.session)
+        if group_policy.is_group_chat(chat_id)
+        else frozenset()
+    )
+    decision = group_policy.decide(
+        payload,
+        chat_id,
+        body,
+        bot_ids=bot_ids,
+        require_trigger=settings.group_reply_requires_trigger,
+    )
+    if not decision.should_reply:
+        logger.info(
+            "group message not addressed to the bot, skipped",
+            extra={**log_context, "reason": decision.reason},
+        )
+        outcome.status = "ignored_group_not_addressed"
+        return outcome.as_dict()
+
+    if decision.is_group:
+        body = group_policy.strip_bot_mentions(body, bot_ids)
+        if not body.strip() and not attachments:
+            # "@JAWARA" and nothing else: called, but given nothing to check.
+            # Silence would read as a broken bot, so say what it needs — and say
+            # it as a quote of the summons, so the group sees who asked.
+            send = await WahaClient(settings).send_text(
+                chat_id, EMPTY_MENTION_REPLY, session=message.session, reply_to=message.waha_message_id
+            )
+            outcome.status = "mention_without_content"
+            outcome.response_dispatched = send.delivered
+            return outcome.as_dict()
+
     # --- stage 4: preprocessing ------------------------------------------
     normalized = normalize_text(body)
     urls = extract_urls(body)
@@ -245,7 +294,15 @@ async def process_message_job(
 
         # --- stage 11: dispatch ------------------------------------------
         if reply_text:
-            send = await WahaClient(settings).send_text(chat_id, reply_text, session=message.session)
+            # Quote the message that summoned the bot, but only in groups: in a
+            # one-to-one chat there is nothing to disambiguate, and the quote
+            # would just add clutter.
+            send = await WahaClient(settings).send_text(
+                chat_id,
+                reply_text,
+                session=message.session,
+                reply_to=message.waha_message_id if decision.is_group else None,
+            )
             outcome.response_dispatched = send.delivered
             if not send.delivered:
                 outcome.degradations.append(f"dispatch_failed:{send.error}")

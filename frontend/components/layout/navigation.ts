@@ -34,13 +34,6 @@ export const NAVIGATION: NavSection[] = [
     ],
   },
   {
-    title: "WhatsApp",
-    items: [
-      { label: "Sessions", href: null },
-      { label: "Devices", href: null },
-    ],
-  },
-  {
     title: "Users",
     items: [
       { label: "Users", href: null },

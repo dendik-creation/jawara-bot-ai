@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.core.rate_limit import check_rate_limit
 from app.core.redis_client import get_redis
 from app.core.security import verify_api_key
+from app.pipeline import group_policy
 from app.schemas.webhook import SessionStatusEvent, WahaWebhookEvent
 from app.services.queue import enqueue_message
 
@@ -19,7 +20,10 @@ async def receive_webhook(event: WahaWebhookEvent, response: Response) -> dict[s
     settings = get_settings()
     payload = event.payload or {}
     waha_message_id = payload.get("id")
-    scope = f"{event.session}:{payload.get('from') or 'unknown'}"
+    chat_id = payload.get("from")
+    # Rate limit the *sender*, not the chat. In a group `from` is the group, so
+    # scoping by it would let one noisy member spend the whole room's budget.
+    scope = f"{event.session}:{group_policy.sender_of(payload, chat_id) or chat_id or 'unknown'}"
 
     if settings.rate_limit_enabled:
         verdict = await check_rate_limit(get_redis(), settings, scope)

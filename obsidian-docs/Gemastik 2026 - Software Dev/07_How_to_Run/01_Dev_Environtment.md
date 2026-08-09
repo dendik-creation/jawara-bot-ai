@@ -239,6 +239,32 @@ Saat menjalankan lewat compose (bukan CLI lokal), `NEXT_PUBLIC_API_URL` masuk se
 
 ---
 
+## 5b. Menguji bot di grup WhatsApp
+
+Prasyarat: `api-gateway` dan `celery-worker` **harus jalan di compose**, bukan CLI lokal. `WHATSAPP_HOOK_URL` di `docker-compose.yml` menunjuk `http://api-gateway:8000/api/v1/webhook`, dan hostname itu hanya resolve di dalam `jawara-net`. Kalau gateway dijalankan lokal, log WAHA akan penuh:
+
+```text
+POST request failed: getaddrinfo ENOTFOUND api-gateway
+```
+
+Artinya tiap pesan WhatsApp — personal maupun grup — di-retry 15 kali lalu dibuang. Alternatifnya §6 (override `host.docker.internal`).
+
+Langkah uji:
+
+1. `docker compose up -d api-gateway celery-worker`, tunggu `healthy`.
+2. Masukkan nomor bot ke sebuah grup uji.
+3. Kirim pesan biasa di grup → **bot harus diam**. Log worker: `group message not addressed to the bot, skipped`.
+4. Sebut bot dengan klaim yang bisa dicek, misal `@62xxxx tolong cek: air rebusan daun kitolod bisa sembuhkan katarak tanpa operasi` → bot membalas sambil mengutip pesan itu.
+5. Bisa juga: reply salah satu balasan bot lalu tulis pertanyaan lanjutan.
+
+Aturannya di `backend/app/pipeline/group_policy.py`: di grup, bot hanya menjawab kalau **di-mention** atau **di-reply**. Pesan grup yang tidak menyapa bot dibuang **sebelum** panggilan ML dan **sebelum** baris audit — jadi isi obrolan grup yang tidak ditujukan ke bot tidak pernah tersimpan.
+
+`GROUP_REPLY_REQUIRES_TRIGGER=false` mematikan syarat itu (bot membalas semua pesan grup). Hanya masuk akal untuk grup uji sekali pakai — di grup nyata itu spam dan nomor berisiko diblokir WhatsApp.
+
+Identitas bot (JID `@c.us` dan kembaran `@lid`-nya) diambil otomatis dari `GET /api/sessions/{session}` dan di-cache per proses worker. Kalau lookup itu gagal, bot **diam** di grup — bukan membalas semua. Untuk memaksa, isi `BOT_WHATSAPP_IDS` di `.env`.
+
+---
+
 ## 6. Catatan penting: WAHA webhook tidak bisa mencapai backend lokal by default
 
 `WHATSAPP_HOOK_URL` di `docker-compose.yml` hardcoded ke `http://api-gateway:8000/api/v1/webhook` — hostname ini hanya resolve **di dalam** `jawara-net`. Saat `api-gateway` tidak dijalankan via compose (kasus dev ini), WAHA container tidak bisa reach backend lokal di host.

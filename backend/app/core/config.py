@@ -113,6 +113,17 @@ class Settings(BaseSettings):
     # on how much operator review capacity exists.
     virustotal_high_threshold: int = 2
 
+    # Group behaviour. In a group the bot answers only when it is addressed —
+    # mentioned or replied to (01_Overview/04_How_it_Works §101). Replying to
+    # every message in a family group is spam and gets the number banned.
+    # Setting this false makes it answer everything, which is only sane in a
+    # throwaway test group.
+    group_reply_requires_trigger: bool = True
+    # Comma-separated JIDs this bot answers to, e.g.
+    # `6281234567890@c.us,249117464891485@lid`. Normally discovered from WAHA;
+    # this is the override for when that lookup cannot be made.
+    bot_whatsapp_ids: str = ""
+
     # WhatsApp dispatch (WAHA REST).
     waha_send_timeout_seconds: float = 5.0
     waha_send_max_attempts: int = 2
@@ -180,6 +191,10 @@ class Settings(BaseSettings):
         if "ml_service_url" not in set_fields or not self.ml_service_url:
             self.ml_service_url = f"http://{self.ml_service_host}:{self.ml_service_port}"
         return self
+
+    @property
+    def bot_whatsapp_id_list(self) -> list[str]:
+        return [jid.strip() for jid in self.bot_whatsapp_ids.split(",") if jid.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

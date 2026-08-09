@@ -11,8 +11,8 @@ Panduan ini untuk development sehari-hari: **infra berat** (WAHA, PostgreSQL, Re
 | Tool | Versi | Catatan |
 |---|---|---|
 | Docker + Docker Compose | terbaru | untuk waha/postgres/redis/qdrant |
-| Python | 3.11+ | sama dengan target image `backend/Dockerfile` |
-| pip | — | dependency manager backend (`requirements-dev.txt`) |
+| Python | 3.14 | sama dengan base image `backend/Dockerfile` dan `requires-python` di `pyproject.toml` |
+| uv | ≥ 0.12 | satu-satunya dependency manager Python (`pyproject.toml` + `uv.lock`); `uv` juga yang mengunduh interpreter 3.14 kalau belum ada |
 | Bun | terbaru | package manager frontend (lihat `frontend/README.md`) |
 
 ---
@@ -59,11 +59,10 @@ Semua host port datang dari `.env` (`WAHA_PORT`, `API_GATEWAY_PORT`, `QDRANT_POR
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/Scripts/activate
-
-pip install -r requirements-dev.txt
+uv sync
 ```
+
+`uv sync` membuat `.venv` sendiri (tidak perlu `python -m venv`), memasang persis versi di `uv.lock` termasuk dependency group `dev`, dan mengunduh CPython 3.14 kalau mesin belum punya. Perintah di bawah ditulis dengan prefix `uv run` sehingga jalan tanpa aktivasi venv; `source .venv/Scripts/activate` sekali di awal juga boleh, lalu prefix-nya bisa dilepas.
 
 Environment variable **tidak perlu di-export manual**. `app/core/config.py` membaca `.env` di root repo (path absolut, bukan relatif terhadap CWD), file yang sama dengan yang dibaca Compose — jadi backend lokal dan container tidak pernah berbeda kredensial.
 
@@ -88,10 +87,10 @@ export DATABASE_URL="postgresql://user:pass@localhost:5433/other-db"   # hanya b
 Bootstrap data layer (sekali per database/volume baru, aman diulang):
 
 ```bash
-python -m app.db.migrate               # apply schema PostgreSQL (idempotent)
-python -m app.vector.qdrant_setup      # buat collection fact_knowledge_base + payload index
-python -m app.scripts.seed_facts       # isi fact_sources + fact_items (data demo)
-python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Service
+uv run python -m app.db.migrate               # apply schema PostgreSQL (idempotent)
+uv run python -m app.vector.qdrant_setup      # buat collection fact_knowledge_base + payload index
+uv run python -m app.scripts.seed_facts       # isi fact_sources + fact_items (data demo)
+uv run python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Service
 ```
 
 `qdrant_setup` mencetak config live-nya untuk dicocokkan dengan tabel di [[02_VectorDB_Specifications]].
@@ -103,7 +102,7 @@ Dua langkah terakhir mengisi knowledge base. Tanpa itu, `POST /v1/rag-query` sel
 Jalankan dengan hot-reload:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Verifikasi:
@@ -115,8 +114,8 @@ curl http://localhost:8000/health
 Jalankan unit test:
 
 ```bash
-pytest -q -m "not integration"   # murni unit, tanpa infra
-pytest -q                        # + integration test (butuh postgres/redis/qdrant hidup)
+uv run pytest -q -m "not integration"   # murni unit, tanpa infra
+uv run pytest -q                        # + integration test (butuh postgres/redis/qdrant hidup)
 ```
 
 Test bertanda `integration` otomatis **skip** kalau service-nya tidak reachable atau `DATABASE_URL` tidak valid — jadi `pytest -q` tetap hijau di mesin tanpa infra, tapi tidak diam-diam melewatkan kegagalan nyata.
@@ -129,8 +128,7 @@ Terminal terpisah, venv yang sama seperti §4 (environment-nya ikut `.env` root,
 
 ```bash
 cd backend
-source .venv/Scripts/activate
-celery -A app.worker worker --loglevel=info --pool=solo
+uv run celery -A app.worker worker --loglevel=info --pool=solo
 ```
 
 `--pool=solo` **wajib di Windows** — pool prefork default Celery tidak jalan di Windows. Container (Linux) tetap pakai prefork, tidak perlu flag ini.
@@ -184,7 +182,7 @@ User `postgres` tidak pernah muncul di `.env` — itu tanda proses **tidak memba
 Sudah diperbaiki — `.env` root sekarang dibaca lewat path absolut (§4). Kalau error ini masih muncul:
 
 1. Pastikan `.env` ada di **root repo**, bukan di `backend/`.
-2. Cek nilai yang benar-benar terbaca: `python -c "from app.core.config import get_settings; print(get_settings().database_url)"`. Harus menampilkan `POSTGRES_USER` milikmu, bukan `postgres`.
+2. Cek nilai yang benar-benar terbaca: `uv run python -c "from app.core.config import get_settings; print(get_settings().database_url)"`. Harus menampilkan `POSTGRES_USER` milikmu, bukan `postgres`.
 3. Kalau `DATABASE_URL` sempat di-export ke nilai lama, `unset DATABASE_URL` — environment variable asli menang atas `.env`.
 
 Efeknya terbatas pada `degradations: ["audit_write_failed"]`: pipeline tetap selesai dan tetap membalas, tapi tidak ada baris audit — by design, kegagalan penulisan audit tidak boleh menelan jawaban yang sudah dihasilkan.

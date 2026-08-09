@@ -12,17 +12,19 @@ Satu keputusan terbuka ditutup di sprint ini (provider LLM). Sisanya masih terbu
 | :--- | :--- |
 | Provider LLM | **Anthropic Claude Haiku** (`claude-haiku-4-5-20251001`). Alasan lengkap di [[Generate_LLM_Responses]]. Kontrak tetap provider-agnostic; `openai` diimplementasikan sebagai pembanding |
 
+## 1b. Ditutup 2026-08-09
+
+| Keputusan | Hasil |
+| :--- | :--- |
+| Toolchain dependency Python | **`uv`, satu-satunya.** `backend/` dan `ml-service/` masing-masing punya `pyproject.toml` (dependency terpin) + `uv.lock`; `requirements.txt` / `requirements-dev.txt` dihapus dari keduanya. Kedua `Dockerfile` menyalin biner `uv` terpin dari `ghcr.io/astral-sh/uv:0.12.2` lalu `uv sync --locked --no-dev` ke interpreter sistem (`UV_PROJECT_ENVIRONMENT=/usr/local`), jadi `uvicorn`/`celery`/healthcheck `python -c` tetap jalan tanpa aktivasi venv. Base image naik dari `python:3.11-slim` ke `python:3.14-slim` supaya `requires-python = ">=3.14"` (yang sudah ada sejak awal di `backend/pyproject.toml`) benar-benar dipenuhi image, bukan hanya venv dev. Stub `backend/src/backend/` bawaan `uv init` dihapus — kode aplikasi ada di `backend/app/`, dan `[tool.uv] package = false` menegaskan service ini aplikasi, bukan library |
+
 ---
 
 ## 2. Masih terbuka (dari [[03_Tech_Stack]] §4)
 
-### 2.1 Toolchain dependency backend — `uv` vs `pip`
+### 2.1 Toolchain dependency Python — ~~`uv` vs `pip`~~ → **ditutup 2026-08-09: `uv`**
 
-Belum diputuskan. Dua manifest masih hidup berdampingan: `pyproject.toml` (uv, `dependencies = []`) dan `requirements.txt` (pip, terisi). Sprint ini menambahkan `httpx` — hanya ke `requirements.txt`, karena itu yang dipakai `backend/Dockerfile`.
-
-`ml-service/` sengaja dibuat hanya dengan `requirements.txt`, tanpa `pyproject.toml` berisi dependency, supaya tidak menggandakan masalah yang sama ke service kedua.
-
-Konsekuensi kalau dibiarkan: kedua file akan makin drift, dan yang mengedit satu sisi tidak akan tahu sisi lain tertinggal.
+Lihat §1.
 
 ### 2.2 Transport live activity feed
 

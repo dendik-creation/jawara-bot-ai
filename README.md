@@ -36,7 +36,13 @@ Single Git repository, root as the only `.git`. Monorepo, not a multi-repo submo
 
 ## Development setup
 
-**Backend** (`backend/`) and **ML Service** (`ml-service/`): Python 3.11+ in the images. Backend dependency management is still unsettled between `pyproject.toml` (uv) and `requirements.txt` (pip) — `requirements.txt` is what the Dockerfiles use.
+**Backend** (`backend/`) and **ML Service** (`ml-service/`): Python 3.14, managed by **uv** — `pyproject.toml` declares the dependencies, `uv.lock` pins them, and both Dockerfiles install from that same lock. There is no `requirements.txt`.
+
+```bash
+cd backend        # or ml-service
+uv sync
+uv run pytest -q
+```
 
 **Frontend** (`frontend/`): uses **bun**, not npm/yarn (lockfile is `bun.lock`).
 

@@ -143,7 +143,7 @@ volumes:
 | Keputusan | Status | Dampak |
 | :--- | :--- | :--- |
 | Provider LLM | **Ditutup 2026-08-08: Anthropic Claude Haiku** | Alasan pemilihan dan implikasinya di [[Generate_LLM_Responses]] |
-| Toolchain dependency backend (`uv` via `pyproject.toml` vs `pip` via `requirements.txt`) | Terbuka | Dua manifest hidup berdampingan; `httpx` sudah ditambahkan hanya ke `requirements.txt` karena itu yang dipakai `Dockerfile` |
+| Toolchain dependency Python (`uv` vs `pip`) | **Ditutup 2026-08-09: `uv`** | Satu manifest per service (`pyproject.toml` + `uv.lock`); `requirements*.txt` dihapus, kedua `Dockerfile` memakai `uv sync --locked --no-dev` |
 | Transport live activity feed (SSE / WebSocket / polling) | Terbuka | Sementara memakai polling dan ditandai sementara di respons API ([[02_Command_Center]]) |
 | Retention policy `message_logs.extracted_text` | Terbuka, makin mendesak | Kolomnya kini benar-benar terisi. Mitigasi sementara: flag `LOG_MESSAGE_CONTENT` ([[Create_Audit_Logging]]) |
 | Anggaran latensi vs `WAHA_SEND_TIMEOUT_SECONDS` | Terbuka, baru | Timeout kirim 5 detik lebih besar dari seluruh target 3 detik ([[Implement_WhatsApp_Response_Sender]]) |

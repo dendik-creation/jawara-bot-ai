@@ -55,12 +55,12 @@ at all is worse than one that answers from a template.
 ## Commands
 
 ```bash
-pip install -r requirements-dev.txt
+uv sync                          # create/refresh .venv from uv.lock
 
-uvicorn app.main:app --reload --port 9000
+uv run uvicorn app.main:app --reload --port 9000
 
-pytest -q -m "not integration"   # unit only
-pytest -q                        # + live Qdrant (skips if unreachable)
+uv run pytest -q -m "not integration"   # unit only
+uv run pytest -q                        # + live Qdrant (skips if unreachable)
 ```
 
 Integration tests create and drop their own throwaway collection; they never
@@ -68,6 +68,8 @@ write to `fact_knowledge_base`.
 
 ## Conventions
 
+- **`uv` is the only dependency toolchain**, same as the gateway: `pyproject.toml`
+  plus `uv.lock`, installed from the lock in the image.
 - **Models load once per process, at startup.** That cost is the reason this
   service exists separately from the gateway.
 - **Qdrant belongs to this service.** The gateway never computes or compares a

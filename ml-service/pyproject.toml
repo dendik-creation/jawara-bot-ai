@@ -1,3 +1,30 @@
+[project]
+name = "ml-service"
+version = "0.1.0"
+description = "JAWARA inference service: embeddings, RAG retrieval, reply generation"
+readme = "README.md"
+authors = [
+    { name = "dendik-creation", email = "setiawandendik0205@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.110.0",
+    "httpx==0.27.0",
+    "pydantic-settings==2.2.1",
+    "qdrant-client==1.8.2",
+    "uvicorn[standard]==0.27.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.1.1",
+    "pytest-asyncio==0.23.6",
+]
+
+[tool.uv]
+# Application, not a library — see backend/pyproject.toml for the same note.
+package = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [

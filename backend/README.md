@@ -28,18 +28,18 @@ degraded rather than failing the job.
 ## Commands
 
 ```bash
-pip install -r requirements-dev.txt
+uv sync                                     # create/refresh .venv from uv.lock
 
-python -m app.db.migrate                    # apply Postgres schema (idempotent)
-python -m app.vector.qdrant_setup           # create Qdrant collection (idempotent)
-python -m app.scripts.seed_facts            # demo fact_items from the vault examples
-python -m app.scripts.ingest_knowledge      # embed them into Qdrant via ML Service
+uv run python -m app.db.migrate             # apply Postgres schema (idempotent)
+uv run python -m app.vector.qdrant_setup    # create Qdrant collection (idempotent)
+uv run python -m app.scripts.seed_facts     # demo fact_items from the vault examples
+uv run python -m app.scripts.ingest_knowledge  # embed them into Qdrant via ML Service
 
-uvicorn app.main:app --reload --port 8000   # gateway
-celery -A app.worker worker --loglevel=info # worker (add --pool=solo on Windows)
+uv run uvicorn app.main:app --reload --port 8000   # gateway
+uv run celery -A app.worker worker --loglevel=info # worker (add --pool=solo on Windows)
 
-pytest -q -m "not integration"              # unit tests only
-pytest -q                                   # + integration (needs live infra)
+uv run pytest -q -m "not integration"       # unit tests only
+uv run pytest -q                            # + integration (needs live infra)
 ```
 
 Integration tests skip themselves when Postgres/Redis/Qdrant are unreachable, so
@@ -47,6 +47,10 @@ Integration tests skip themselves when Postgres/Redis/Qdrant are unreachable, so
 
 ## Conventions
 
+- **`uv` is the only dependency toolchain.** `pyproject.toml` declares the
+  dependencies, `uv.lock` pins them, and `Dockerfile` installs from that same
+  lock — there is no `requirements.txt` to drift out of sync with it. Add a
+  package with `uv add <name>==<version>`, never by editing the lockfile.
 - **Config comes from env vars only** (`app/core/config.py`); no literals in code.
   The repo-root `.env` is read by absolute path, so a process started from
   `backend/` sees exactly what Compose sees. Connection strings left unset are

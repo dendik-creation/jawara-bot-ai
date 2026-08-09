@@ -1,0 +1,186 @@
+"""Inference endpoints: embed, rag-query, generate, classify.
+
+Every response carries `model_version` — the audit trail has to be able to name
+which model decided something, and "the model we happened to be running that
+week" is not an answer.
+"""
+
+import logging
+
+from fastapi import APIRouter, Depends
+
+from app.api.deps import Timer, envelope, get_repository
+from app.core.config import get_settings
+from app.core.errors import MlError
+from app.core.security import verify_internal_key
+from app.llm.prompt import GenerationRequest
+from app.llm.template_provider import TemplateProvider
+from app.llm.validator import validate_response
+from app.models.registry import registry
+from app.rag.qdrant_repo import QdrantRepository
+from app.schemas.contract import MlRequest, MlResponse
+
+logger = logging.getLogger("app.api.inference")
+
+router = APIRouter(dependencies=[Depends(verify_internal_key)])
+
+
+@router.post("/embed", response_model=MlResponse)
+async def embed(request: MlRequest) -> MlResponse:
+    texts = request.payload.get("texts") or []
+    if not isinstance(texts, list) or not all(isinstance(text, str) for text in texts):
+        raise MlError("invalid_payload", "payload.texts must be a list of strings", retryable=False)
+
+    embedder = registry.embedder()
+    with Timer() as timer:
+        vectors = await embedder.embed(texts)
+
+    return envelope(
+        request.request_id,
+        {"vectors": vectors, "dim": embedder.dim, "count": len(vectors)},
+        embedder.model_version,
+        timer.elapsed_ms,
+    )
+
+
+@router.post("/rag-query", response_model=MlResponse)
+async def rag_query(
+    request: MlRequest,
+    repository: QdrantRepository = Depends(get_repository),
+) -> MlResponse:
+    """Embed the claim, then run the documented filtered similarity search.
+
+    Below-threshold results are reported as `unverified: true` with an empty
+    match list. Returning the nearest weak match instead would let the generator
+    write a confident answer on top of an unrelated fact — the single most
+    damaging failure mode this pipeline has.
+    """
+    settings = get_settings()
+    query = (request.payload.get("query") or "").strip()
+    if not query:
+        raise MlError("invalid_payload", "payload.query must be a non-empty string", retryable=False)
+
+    category = request.payload.get("category")
+    top_k = int(request.payload.get("top_k") or settings.rag_top_k)
+    threshold = float(
+        request.payload.get("score_threshold")
+        if request.payload.get("score_threshold") is not None
+        else settings.rag_score_threshold
+    )
+
+    embedder = registry.embedder()
+    with Timer() as timer:
+        vectors = await embedder.embed([query])
+        try:
+            matches = await repository.search(
+                vector=vectors[0], category=category, top_k=top_k, score_threshold=threshold
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Qdrant down: the pipeline continues without knowledge context and
+            # the answer is marked low-confidence (02_Data_Pipeline §6).
+            logger.warning("qdrant retrieval failed", extra={"error": type(exc).__name__})
+            raise MlError(
+                "retrieval_unavailable", type(exc).__name__, status_code=503, retryable=True
+            ) from exc
+
+    top_score = max((match["score"] for match in matches), default=0.0)
+    return envelope(
+        request.request_id,
+        {
+            "matches": matches,
+            "unverified": not matches,
+            "score_threshold": threshold,
+            "category_filter": category,
+            "top_k": top_k,
+        },
+        embedder.model_version,
+        timer.elapsed_ms,
+        confidence=top_score,
+    )
+
+
+@router.post("/generate", response_model=MlResponse)
+async def generate(request: MlRequest) -> MlResponse:
+    """Generate the four-section WhatsApp reply and enforce the contract.
+
+    Order matters: generate, then validate, then repair. A response that fails
+    validation is never returned to the gateway — it is replaced by the
+    deterministic composer, and `fallback_used` says so in the audit trail.
+    """
+    payload = request.payload
+    generation = GenerationRequest(
+        user_text=str(payload.get("user_text") or "").strip(),
+        category=payload.get("category"),
+        risk_level=str(payload.get("risk_level") or "UNKNOWN"),
+        context=list(payload.get("context") or []),
+        url_verdicts=list(payload.get("url_verdicts") or []),
+    )
+    if not generation.user_text:
+        raise MlError("invalid_payload", "payload.user_text must not be empty", retryable=False)
+
+    provider = registry.llm()
+    fallback = TemplateProvider()
+    fallback_reason = ""
+
+    with Timer() as timer:
+        try:
+            text = await provider.generate(generation)
+        except MlError as exc:
+            logger.warning(
+                "llm generation failed, composing deterministic reply",
+                extra={"request_id": request.request_id, "error": exc.error_code},
+            )
+            text = fallback.compose(generation)
+            fallback_reason = exc.error_code
+
+        validated = validate_response(text)
+        if not validated.is_valid:
+            logger.warning(
+                "generated reply failed the four-section contract, repairing",
+                extra={"request_id": request.request_id, "violations": list(validated.violations)},
+            )
+            fallback_reason = fallback_reason or f"contract:{','.join(validated.violations)}"
+            validated = validate_response(fallback.compose(generation))
+
+    if not validated.is_valid:
+        # The deterministic composer failing its own contract is a code bug, not
+        # a provider problem — surface it instead of sending a broken reply.
+        raise MlError(
+            "response_contract_violation",
+            f"composer output invalid: {','.join(validated.violations)}",
+            status_code=500,
+            retryable=False,
+        )
+
+    model_version = fallback.model_version if fallback_reason else provider.model_version
+    return envelope(
+        request.request_id,
+        {
+            "message": validated.text,
+            "sections": validated.as_sections(),
+            "warnings": list(validated.warnings),
+            "fallback_used": bool(fallback_reason),
+            "fallback_reason": fallback_reason,
+        },
+        model_version,
+        timer.elapsed_ms,
+    )
+
+
+@router.post("/classify", response_model=MlResponse)
+async def classify(request: MlRequest) -> MlResponse:
+    """Threat classification — no trained model exists yet.
+
+    The endpoint is part of the published contract, so it answers with the
+    structured error the gateway knows how to branch on rather than a 404. The
+    gateway's documented behaviour on this error is to fall through to the
+    deterministic Detection Rules path and mark the result `ml_unavailable`
+    (02_Data_Pipeline §6). Training the first classifier is Phase 4 work
+    ([[05_Training_Jobs]]).
+    """
+    raise MlError(
+        "model_not_available",
+        "no threat classification model has been trained and promoted yet",
+        status_code=503,
+        retryable=False,
+    )

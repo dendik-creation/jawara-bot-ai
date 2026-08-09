@@ -1,13 +1,26 @@
-"""Control Panel read APIs: privacy rules, honest empty states, access gate."""
+"""Control Panel read APIs: privacy rules and honest empty states.
+
+The access gate itself lives in `test_auth.py`; here it is satisfied once, in an
+autouse fixture, so these assertions are about payloads rather than about 401s.
+"""
 
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.security import require_operator
 from app.main import app
+from app.services.auth import Operator
 
 client = TestClient(app)
+
+OPERATOR = Operator(
+    id="11111111-1111-1111-1111-111111111111",
+    email="ops@example.com",
+    full_name="Operator Satu",
+    is_active=True,
+)
 
 SUMMARY = {
     "window_hours": 24,
@@ -37,21 +50,15 @@ ACTIVITY = [
 
 
 @pytest.fixture(autouse=True)
-def open_dashboard(monkeypatch):
-    """Run the read-API tests with no access gate configured.
+def signed_in():
+    """Satisfy the operator gate without a database.
 
-    `Settings` reads the repo-root `.env`, which carries a real
-    `DASHBOARD_API_KEY` on a developer machine — without pinning it empty here
-    every unauthenticated request in this module would answer `401` and the
-    assertions would be testing the gate, not the payload. The gate itself has
-    its own test below, which sets the key explicitly.
+    Overriding the dependency, not stubbing the session lookup: these tests are
+    about what the endpoints return once someone is signed in.
     """
-    from app.core.config import get_settings
-
-    monkeypatch.setenv("DASHBOARD_API_KEY", "")
-    get_settings.cache_clear()
+    app.dependency_overrides[require_operator] = lambda: OPERATOR
     yield
-    get_settings.cache_clear()
+    app.dependency_overrides.pop(require_operator, None)
 
 
 @pytest.fixture
@@ -107,18 +114,3 @@ def test_service_health_lists_every_dependency(monkeypatch):
     assert "ml_service" in body["degraded"]
 
 
-def test_dashboard_key_is_enforced_when_configured(monkeypatch, stub_queries):
-    from app.core.config import Settings, get_settings
-
-    get_settings.cache_clear()
-    monkeypatch.setenv("DASHBOARD_API_KEY", "panel-secret")
-    assert Settings().dashboard_api_key == "panel-secret"
-
-    try:
-        assert client.get("/api/v1/dashboard/summary").status_code == 401
-        assert (
-            client.get("/api/v1/dashboard/summary", headers={"X-Dashboard-Key": "panel-secret"}).status_code
-            == 200
-        )
-    finally:
-        get_settings.cache_clear()

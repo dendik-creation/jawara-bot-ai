@@ -8,14 +8,16 @@ Two processes, one image: the gateway (`app.main:app`) acks WAHA webhooks in
 
 ```
 app/
-  api/v1/endpoints/   webhook, health, Control Panel read APIs
+  api/v1/endpoints/   webhook, health, auth, Control Panel read APIs
   clients/            ml_client, safe_browsing, virustotal, waha_client
-  core/               config, auth, logging, rate limiter, redis client, cache, hashing
+  core/               config, security (webhook key + operator gate), passwords,
+                      logging, rate limiter, redis client, cache, hashing
   db/                 SQL migrations + runner
   pipeline/           normalizer, url_extractor, intent_router, url_safety, orchestrator
   schemas/            pydantic models (webhook payload, queue envelope)
-  scripts/            seed_facts, ingest_knowledge
-  services/           queue producer, message_log (audit), dashboard, health probes
+  scripts/            seed_facts, ingest_knowledge, create_operator
+  services/           queue producer, message_log (audit), dashboard, health probes,
+                      auth (operator accounts + sessions)
   vector/             Qdrant collection setup
   worker/             celery app + tasks
 ```
@@ -31,6 +33,8 @@ degraded rather than failing the job.
 uv sync                                     # create/refresh .venv from uv.lock
 
 uv run python -m app.db.migrate             # apply Postgres schema (idempotent)
+uv run python -m app.scripts.create_operator --email you@example.com --name "Nama"
+
 uv run python -m app.vector.qdrant_setup    # create Qdrant collection (idempotent)
 uv run python -m app.scripts.seed_facts     # demo fact_items from the vault examples
 uv run python -m app.scripts.ingest_knowledge  # embed them into Qdrant via ML Service
@@ -57,6 +61,13 @@ Integration tests skip themselves when Postgres/Redis/Qdrant are unreachable, so
   derived from their components (`POSTGRES_*`, `REDIS_PORT`, `ML_SERVICE_PORT`)
   against `localhost`; real env vars still win, which is how Compose injects
   in-network hostnames.
+- **The Control Panel is closed by default.** Every `/api/v1/dashboard`,
+  `/api/v1/system` and `/api/v1/whatsapp` route sits behind `require_operator`,
+  applied on the router so a new endpoint is protected by existing. Sessions are
+  rows in `operator_sessions`, not signed tokens: logout revokes, and disabling
+  an account kills its live sessions on the next request. Operator session
+  tokens and machine keys (`WAHA_API_KEY`, `ML_SERVICE_API_KEY`) are different
+  credential classes and never substitute for each other.
 - **Logs are JSON, one object per line.** Pass context via `extra=`, never string
   interpolation — `waha_message_id` is the correlation ID from webhook through
   queue to worker.

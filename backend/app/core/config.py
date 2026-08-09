@@ -126,9 +126,23 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "http://localhost:3001,http://localhost:3000"
     dashboard_window_hours: int = 24
     dashboard_activity_limit: int = 25
-    # Stopgap shared secret until operator auth + RBAC exist (Phase 2). Empty
-    # means open, which is fine for a local dev stack and not fine in production.
-    dashboard_api_key: str = ""
+
+    # Operator authentication (09_Security/06_Platform_Security_Requirements §1).
+    # Every Control Panel endpoint requires a session token; there is no
+    # deployment-wide shared secret and no "empty means open" mode, because a
+    # gate that can be disabled by leaving a variable blank eventually is.
+    #
+    # 8 hours: one working shift. Long enough that an operator is not re-typing
+    # a password between incidents, short enough that a stolen token dies the
+    # same day.
+    auth_session_ttl_minutes: int = 480
+    # bcrypt cost. Raise as hardware improves — existing hashes carry their own
+    # cost and keep verifying.
+    auth_bcrypt_rounds: int = 12
+    # Login attempts per (email, client IP) inside the window. Deliberately far
+    # below the webhook budget: humans do not type a password 20 times a minute.
+    auth_login_max_attempts: int = 5
+    auth_login_window_seconds: int = 300
 
     log_level: str = "INFO"
 

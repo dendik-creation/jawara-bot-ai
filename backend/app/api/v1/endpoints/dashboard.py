@@ -4,39 +4,30 @@ The browser talks to this gateway and to nothing else — never to WAHA, Qdrant,
 Redis, PostgreSQL or the ML Service (08_Dashboard/01_Control_Panel_Overview.md
 §4). Everything here is read-only, aggregate, and free of message content.
 
-Auth: operator authentication and RBAC are Planned (Phase 2). Until they exist,
-`DASHBOARD_API_KEY` gives self-hosted deployments a shared-secret gate; leaving
-it empty keeps local development open. This is a stopgap, not RBAC — it
-authenticates the deployment, not a person, and it must not be confused with the
-operator session tokens described in
-09_Security/06_Platform_Security_Requirements.md §1.
+Auth: every endpoint here requires a signed-in operator (`app/core/security.py`,
+`require_operator`). The old `DASHBOARD_API_KEY` shared secret is gone — it
+authenticated a deployment rather than a person, and its "empty means open"
+default meant the gate was off exactly where it was easiest to forget. RBAC is
+still Planned: any operator who can sign in sees everything on this router.
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from app.core.config import get_settings
+from app.core.security import require_operator
 from app.services import dashboard
 from app.services.health import service_health
 
 logger = logging.getLogger("app.api.dashboard")
 
-router = APIRouter()
+# One gate for the whole router: a new endpoint is protected by existing, not by
+# the author remembering to add a dependency.
+router = APIRouter(dependencies=[Depends(require_operator)])
 
 
-async def verify_dashboard_access(x_dashboard_key: str | None = Header(default=None)) -> None:
-    settings = get_settings()
-    if not settings.dashboard_api_key:
-        return
-    if x_dashboard_key != settings.dashboard_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-Dashboard-Key",
-        )
-
-
-@router.get("/dashboard/summary", dependencies=[Depends(verify_dashboard_access)])
+@router.get("/dashboard/summary")
 async def dashboard_summary() -> dict[str, object]:
     settings = get_settings()
     try:
@@ -50,7 +41,7 @@ async def dashboard_summary() -> dict[str, object]:
         }
 
 
-@router.get("/dashboard/activity", dependencies=[Depends(verify_dashboard_access)])
+@router.get("/dashboard/activity")
 async def dashboard_activity(limit: int = Query(default=25, ge=1, le=100)) -> dict[str, object]:
     """Live Activity feed.
 
@@ -66,7 +57,7 @@ async def dashboard_activity(limit: int = Query(default=25, ge=1, le=100)) -> di
         return {"available": False, "reason": "database_unavailable", "items": []}
 
 
-@router.get("/dashboard/recent", dependencies=[Depends(verify_dashboard_access)])
+@router.get("/dashboard/recent")
 async def dashboard_recent(limit: int = Query(default=10, ge=1, le=50)) -> dict[str, object]:
     """Recent threats / incidents / alerts.
 
@@ -89,12 +80,12 @@ async def dashboard_recent(limit: int = Query(default=10, ge=1, le=50)) -> dict[
     }
 
 
-@router.get("/system/services", dependencies=[Depends(verify_dashboard_access)])
+@router.get("/system/services")
 async def system_services() -> dict[str, object]:
     return await service_health(get_settings())
 
 
-@router.get("/whatsapp/sessions", dependencies=[Depends(verify_dashboard_access)])
+@router.get("/whatsapp/sessions")
 async def whatsapp_sessions() -> dict[str, object]:
     """Normalised WAHA session list — the frontend never calls WAHA itself."""
     from app.clients.waha_client import WahaClient

@@ -2,7 +2,7 @@
 
 Panduan ini untuk development sehari-hari: **infra berat** (WAHA, PostgreSQL, Redis, Qdrant) jalan di Docker Compose, sementara **backend (FastAPI)** dan **frontend (Next.js)** dijalankan langsung via CLI lokal (hot-reload, debugging cepat, tanpa rebuild image tiap ganti kode).
 
-> `ml-service` belum ada di repo maupun compose ([[04_ML_Service]]). Saat service itu lahir, tambahkan langkah menjalankannya di sini — dan karena readiness-nya bergantung pada model yang selesai dimuat, jangan samakan dengan "container sudah up".
+> `ml-service` sudah ada di repo dan di compose ([[04_ML_Service]]). Ia dijalankan lewat Docker seperti infra lain, bukan lewat CLI lokal — modelnya dimuat sekali saat startup, jadi hot-reload tidak membantu di sana. Ingat: `container up` ≠ `ready`; pakai `GET /v1/ready`, bukan `GET /v1/health`.
 
 ---
 
@@ -32,7 +32,7 @@ cp .env.example .env
 Jangan `docker compose up` tanpa argumen (itu akan build & start `api-gateway`, `celery-worker`, `frontend-dashboard` juga). Sebutkan service eksplisit:
 
 ```bash
-docker compose up -d waha postgres redis qdrant
+docker compose up -d waha postgres redis qdrant ml-service
 ```
 
 Cek semua sehat:
@@ -47,6 +47,7 @@ docker compose ps
 | postgres | `POSTGRES_PORT` (5432) | `docker compose exec postgres pg_isready -U <POSTGRES_USER>` |
 | redis | `REDIS_PORT` (6379) | `docker compose exec redis redis-cli ping` |
 | qdrant | `QDRANT_PORT` (6333) | http://localhost:6333/healthz |
+| ml-service | `ML_SERVICE_PORT` (9000) | `curl -H "X-Internal-Api-Key: <ML_SERVICE_API_KEY>" http://localhost:9000/v1/ready` |
 
 Semua host port datang dari `.env` (`WAHA_PORT`, `API_GATEWAY_PORT`, `QDRANT_PORT`, `FRONTEND_PORT`, `POSTGRES_PORT`, `REDIS_PORT`), bukan hardcoded di compose — ganti value di `.env` kalau port bentrok, tidak perlu edit `docker-compose.yml`.
 
@@ -86,11 +87,27 @@ export USER_HASH_SALT="<sama dengan USER_HASH_SALT di .env>"
 Bootstrap data layer (sekali per database/volume baru, aman diulang):
 
 ```bash
-python -m app.db.migrate            # apply schema PostgreSQL (idempotent)
-python -m app.vector.qdrant_setup   # buat collection fact_knowledge_base + payload index
+python -m app.db.migrate               # apply schema PostgreSQL (idempotent)
+python -m app.vector.qdrant_setup      # buat collection fact_knowledge_base + payload index
+python -m app.scripts.seed_facts       # isi fact_sources + fact_items (data demo)
+python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Service
 ```
 
 `qdrant_setup` mencetak config live-nya untuk dicocokkan dengan tabel di [[02_VectorDB_Specifications]].
+
+Dua langkah terakhir mengisi knowledge base. Tanpa itu, `POST /v1/rag-query` selalu mengembalikan `unverified: true` — bukan error, tapi tidak ada yang bisa dicocokkan. `ingest_knowledge` butuh `ml-service` hidup dan `ML_SERVICE_URL` mengarah ke sana (`http://localhost:9000` untuk dev hybrid).
+
+Env tambahan untuk proses lokal:
+
+```bash
+export ML_SERVICE_URL="http://localhost:9000"
+export ML_SERVICE_API_KEY="<sama dengan ML_SERVICE_API_KEY di .env>"
+
+# Kosongkan kalau belum punya — provider yang tidak dikonfigurasi hanya
+# menghasilkan verdict UNKNOWN, bukan kegagalan pipeline
+export GOOGLE_SAFE_BROWSING_API_KEY=""
+export VIRUSTOTAL_API_KEY=""
+```
 
 Jalankan dengan hot-reload:
 
@@ -135,7 +152,18 @@ curl -X POST http://localhost:8000/api/v1/webhook \
   -d '{"event":"message.any","session":"default","payload":{"id":"dev_1","from":"628111@c.us","body":"tes"}}'
 ```
 
-Log worker (JSON satu baris per event) akan memuat `waha_message_id` yang sama dengan log gateway — itu correlation ID-nya. Cek antrean langsung:
+Log worker akan menutup dengan satu baris `pipeline complete` berisi hasil akhirnya:
+
+```json
+{"message":"pipeline complete","waha_message_id":"dev_1","intent":"HEALTH_HOAX",
+ "engine":"text_verification","risk":"HIGH","match_count":1,
+ "similarity_score":0.8707,"response_dispatched":true,
+ "response_latency_ms":840,"logged":true,"degradations":[]}
+```
+
+`degradations` adalah tempat melihat apa yang tidak berjalan: `ml_unavailable:*`, `url_intel_unavailable`, `knowledge_unverified`, `llm_fallback:*`, `dispatch_failed:*`, `audit_write_failed`. Daftar kosong berarti seluruh jalur berjalan penuh.
+
+Log worker (JSON satu baris per event) memuat `waha_message_id` yang sama dengan log gateway — itu correlation ID-nya, dan ia berlanjut sampai ke `request_id` panggilan ML Service. Cek antrean langsung:
 
 ```bash
 docker compose exec redis redis-cli LLEN jawara.messages   # 0 = worker sudah menghabiskan queue
@@ -171,7 +199,11 @@ Port default Next.js dev server (`3000`) **bentrok** dengan host port WAHA (`300
 NEXT_PUBLIC_API_URL=http://localhost:8000 bun dev -- -p 3001
 ```
 
-Buka `http://localhost:3001`.
+Buka `http://localhost:3001` — Command Center. Layar kedua: `/system/service-health`.
+
+Kalau dashboard tampil tapi semua angka "belum tersedia", cek `CORS_ALLOW_ORIGINS` di backend memuat `http://localhost:3001`; browser akan memblokir responsnya secara diam-diam kalau tidak.
+
+Saat menjalankan lewat compose (bukan CLI lokal), `NEXT_PUBLIC_API_URL` masuk sebagai **build arg** — Next.js meng-inline-nya ke bundle klien saat build, jadi mengubahnya menuntut `docker compose build frontend-dashboard`, bukan sekadar restart.
 
 ---
 

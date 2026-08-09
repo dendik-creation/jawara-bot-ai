@@ -11,24 +11,26 @@ Kolom **Status** mengikuti kosakata di [[05_Product_Scope_and_Roadmap]] §2.
 | Layer / Komponen        | Teknologi Terpilih                        | Versi                      | Status | Alasan Pemilihan & Keunggulan Utama                                                                                                                   |
 | :---------------------- | :---------------------------------------- | :------------------------- | :--- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **WhatsApp Integration**| **WAHA (WhatsApp HTTP API)**              | `devlikeapro/waha:latest`  | Implemented | Engine WhatsApp self-hosted berbasis Docker. Menyediakan REST API lokal, webhook event, bebas biaya per-pesan, dan kontrol penuh atas sesi. |
-| **API Gateway**         | **Python (FastAPI)**                      | `0.110+`                   | Partial | Async native (ASGI), integrasi mudah dengan ekosistem Python, otogenerasi OpenAPI spec. Berperan sebagai gateway API, bukan tempat kode ML. |
+| **API Gateway**         | **Python (FastAPI)**                      | `0.110+`                   | Implemented | Async native (ASGI), integrasi mudah dengan ekosistem Python, otogenerasi OpenAPI spec. Berperan sebagai gateway API, bukan tempat kode ML. |
 | **Task Queue & Broker** | **Redis + Celery**                        | `Redis 7.2` / `Celery 5.3` | Implemented | Mencegah timeout webhook WAHA dengan mengalihkan pemrosesan berat ke antrean async worker. Redis juga dipakai untuk rate limiting dan cache. |
 | **Relational Database** | **PostgreSQL**                            | `16.x`                     | Partial | Sistem pencatatan relasional utama: users, threats, incidents, policies, audit, metadata AI/ML ([[01_PostgreSQL_Schema]]).                  |
-| **Vector Database**     | **Qdrant**                                | `1.8+`                     | Partial | Retrieval vektor untuk Knowledge Base/RAG. HNSW indexing, payload filtering, Docker-friendly ([[02_VectorDB_Specifications]]).              |
-| **ML Service**          | **FastAPI (proses terpisah)**             | -                          | Planned | Service standalone untuk inference, embedding, OCR, training, evaluasi. Direktori `ml-service/` belum ada ([[04_ML_Service]]).              |
-| **RAG Framework**       | **LlamaIndex**                            | `0.10+`                    | Planned | Indexing dokumen, orkestrasi prompt, integrasi Qdrant. Berjalan **di dalam ML Service**, bukan di gateway.                                   |
-| **Embedding Model**     | **`text-embedding-3-small` / `IndoBERT`** | -                          | Planned | Konteks semantik Bahasa Indonesia. Dimensi vektor adalah config (`EMBEDDING_DIM`): 1536 / 768.                                              |
-| **OCR Engine**          | **EasyOCR / Tesseract**                   | `1.7+`                     | Planned | Ekstraksi teks flyer/infografis/tangkapan layar. Dimuat sekali per proses ML Service, bukan per request.                                     |
-| **LLM Engine**          | **Belum diputuskan** (kandidat: OpenAI GPT-4o-mini / Claude Haiku) | - | Planned | Keputusan terbuka. Kontrak `/v1/generate` dirancang provider-agnostic agar pergantian provider jadi perubahan internal ML Service saja.      |
-| **Frontend Control Panel** | **Next.js (App Router) + shadcn/ui**   | Next.js 16.x / React 19.x  | Planned | Control Panel operator. Repo saat ini masih scaffold `create-next-app`; belum ada layar produk ([[01_Control_Panel_Overview]]).             |
+| **Vector Database**     | **Qdrant**                                | `1.8+`                     | Implemented | Retrieval vektor untuk Knowledge Base/RAG. HNSW indexing, payload filtering, Docker-friendly ([[02_VectorDB_Specifications]]).              |
+| **ML Service**          | **FastAPI (proses terpisah)**             | `0.110+`                   | Partial | Service standalone di `ml-service/`. Sudah: embed, rag-query, generate, kb/upsert, health/ready. Belum: classify berbasis model, OCR, train, evaluate ([[04_ML_Service]]). |
+| **RAG Framework**       | **`qdrant-client` langsung (tanpa LlamaIndex)** | `1.8.2`              | Implemented | Retrieval MVP adalah single-shot embed + filtered search + threshold. LlamaIndex tidak dipakai: ia menambah lapisan abstraksi tanpa menambah kemampuan pada bentuk query ini. Pertimbangkan lagi bila multi-hop retrieval / re-ranking masuk scope (Post-MVP). |
+| **Embedding Model**     | **`hash-embed-v0` (default) / `text-embedding-3-small` / `IndoBERT`** | - | Partial | Default `hash-embed-v0`: deterministik, offline, **leksikal bukan semantik**. Set `EMBEDDING_PROVIDER=openai` untuk semantik nyata. Dimensi adalah config (`EMBEDDING_DIM`): 1536 / 768 ([[Build_Text_Verification_Pipeline]]). |
+| **OCR Engine**          | **EasyOCR / Tesseract**                   | `1.7+`                     | Planned | Ekstraksi teks flyer/infografis/tangkapan layar. Di luar scope Sprint 1. Dimuat sekali per proses ML Service, bukan per request.             |
+| **LLM Engine**          | **Anthropic Claude Haiku** (`claude-haiku-4-5`) | -                    | Partial | **Keputusan diambil 2026-08-08** — alasan di [[Generate_LLM_Responses]]. `openai` (`gpt-4o-mini`) diimplementasikan sebagai pembanding; `template` adalah komposer deterministik offline saat tidak ada API key. Kontrak `/v1/generate` tetap provider-agnostic. |
+| **Frontend Control Panel** | **Next.js (App Router) + shadcn/ui**   | Next.js 16.x / React 19.x  | Partial | Shell navigasi + Command Center + Service Health sudah ada; layar lain dan auth operator belum ([[01_Control_Panel_Overview]]).             |
 
 ---
 
 ## 2. Infrastructure & Containerization Setup
 
-Seluruh layanan dikemas menggunakan **Docker & Docker Compose**. Compose nyata ada di `docker-compose.yml` root repo dengan 7 service: `waha`, `api-gateway`, `celery-worker`, `postgres`, `qdrant`, `redis`, `frontend-dashboard` — semuanya ber-healthcheck dan memakai host port dari `.env`.
+Seluruh layanan dikemas menggunakan **Docker & Docker Compose**. Compose nyata ada di `docker-compose.yml` root repo dengan 8 service: `waha`, `api-gateway`, `celery-worker`, `ml-service`, `postgres`, `qdrant`, `redis`, `frontend-dashboard` — semuanya ber-healthcheck dan memakai host port dari `.env`.
 
-`ml-service` **belum ada** di compose. Saat ditambahkan nanti: `build: ./ml-service`, healthcheck berbasis readiness (model sudah dimuat, bukan sekadar proses hidup), restart policy sendiri, dan skala sendiri (`docker compose up --scale ml-service=N`). Lihat [[04_ML_Service]].
+`ml-service` memakai healthcheck berbasis **readiness** (`GET /v1/ready`, model sudah dimuat), bukan liveness, sesuai [[04_ML_Service]] §6. Ia bisa diskalakan sendiri (`docker compose up --scale ml-service=N`); satu worker uvicorn per container disengaja, karena instance model tinggal di memori proses.
+
+`frontend-dashboard` menerima `NEXT_PUBLIC_*` sebagai **build arg**, bukan environment runtime — Next.js meng-inline nilai itu ke bundle klien saat build, jadi environment runtime tidak pernah sampai ke browser.
 
 Blok di bawah adalah **contoh referensi** (disederhanakan, bukan salinan file nyata). Prosedur menjalankan yang akurat ada di [[01_Dev_Environtment]] dan [[02_Prod_Environtment]].
 
@@ -138,12 +140,15 @@ volumes:
 
 ## 4. Keputusan Teknis yang Masih Terbuka
 
-| Keputusan | Dampak |
-| :--- | :--- |
-| Provider LLM | Memblokir finalisasi kontrak `/v1/generate`, walau kontraknya sengaja dirancang provider-agnostic |
-| Toolchain dependency backend (`uv` via `pyproject.toml` vs `pip` via `requirements.txt`) | Dua manifest hidup berdampingan saat ini; akan drift bila hanya satu yang diedit |
-| Transport live activity feed (SSE / WebSocket / polling) | Menentukan perlu tidaknya channel pub/sub Redis tambahan ([[02_Command_Center]]) |
-| Retention policy `message_logs.extracted_text` | Prasyarat privasi sebelum trafik nyata ([[01_Threat_Model_and_Data_Protection]]) |
+| Keputusan | Status | Dampak |
+| :--- | :--- | :--- |
+| Provider LLM | **Ditutup 2026-08-08: Anthropic Claude Haiku** | Alasan pemilihan dan implikasinya di [[Generate_LLM_Responses]] |
+| Toolchain dependency backend (`uv` via `pyproject.toml` vs `pip` via `requirements.txt`) | Terbuka | Dua manifest hidup berdampingan; `httpx` sudah ditambahkan hanya ke `requirements.txt` karena itu yang dipakai `Dockerfile` |
+| Transport live activity feed (SSE / WebSocket / polling) | Terbuka | Sementara memakai polling dan ditandai sementara di respons API ([[02_Command_Center]]) |
+| Retention policy `message_logs.extracted_text` | Terbuka, makin mendesak | Kolomnya kini benar-benar terisi. Mitigasi sementara: flag `LOG_MESSAGE_CONTENT` ([[Create_Audit_Logging]]) |
+| Anggaran latensi vs `WAHA_SEND_TIMEOUT_SECONDS` | Terbuka, baru | Timeout kirim 5 detik lebih besar dari seluruh target 3 detik ([[Implement_WhatsApp_Response_Sender]]) |
+
+Daftar lengkap keputusan terbuka setelah Sprint 1: [[Open_Decisions_Carried_Forward]].
 
 ---
 

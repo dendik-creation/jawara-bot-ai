@@ -2,7 +2,9 @@
 
 Control Panel JAWARA adalah **Control & Monitoring Center** untuk operator keamanan, bukan sekadar dashboard analitik. Fungsinya: melihat apa yang terjadi, memahami kenapa sistem memutuskan sesuatu, dan mengambil tindakan.
 
-> **Status:** Planned untuk seluruh layar. Frontend saat ini masih scaffold `create-next-app` + shadcn — belum ada layar produk. Lihat [[05_Product_Scope_and_Roadmap]].
+> **Status:** Partial (2026-08-08). Shell navigasi di §2 sudah dibangun, dengan dua layar hidup: **Command Center** (termasuk Live Activity) dan **System → Service Health**. Entri navigasi yang layarnya belum ada dirender non-aktif dengan badge "belum tersedia" — bukan tautan ke halaman kosong, dan bukan disembunyikan.
+>
+> **Belum ada autentikasi operator maupun RBAC.** Sementara ini `DASHBOARD_API_KEY` mengunci endpoint Control Panel bila diisi. Itu mengautentikasi deployment, bukan orang; gateway tidak boleh diekspos ke internet sebelum Fase 2 ([[Implement_Command_Center_Dashboard]]).
 
 ---
 

@@ -8,7 +8,9 @@ Batasan peran:
 - Akses retrieval berada di belakang **ML Service**; gateway tidak menghitung atau membandingkan embedding sendiri ([[04_ML_Service]] §5).
 - Isi Knowledge Base tidak mengubah parameter model ([[03_Knowledge_Base]]).
 
-**Status:** collection `fact_knowledge_base` dan payload index-nya sudah dibuat oleh `backend/app/vector/qdrant_setup.py`. Belum ada embedding yang diisi, dan pipeline ingestion dokumen masih Planned.
+**Status:** Implemented. Collection `fact_knowledge_base` dan payload index-nya dibuat oleh `backend/app/vector/qdrant_setup.py`, dan **sudah terisi embedding** lewat `backend/app/scripts/ingest_knowledge.py` → `POST /v1/kb/upsert`. Retrieval berjalan di `ml-service/app/rag/qdrant_repo.py` dengan bentuk query persis seperti §3.
+
+Yang masih Planned: pipeline ingestion **dokumen** (upload PDF/DOCX operator, parsing, chunking) — ingestion yang ada sekarang membaca `fact_items` dari PostgreSQL, bukan file ([[03_Knowledge_Base]]).
 
 ---
 
@@ -121,6 +123,10 @@ Tanpa index, Qdrant melakukan full payload scan tiap query — persis yang membu
 **Idempotency:** collection yang sudah ada tidak dibuat ulang (itu akan menghapus seluruh embedding); hanya payload index yang di-assert ulang.
 
 **Dimensi vektor adalah config (`EMBEDDING_DIM`), bukan konstanta:** `1536` untuk `text-embedding-3-small`, `768` untuk IndoBERT. Qdrant tidak bisa mengubah dimensi collection secara in-place — pindah model berarti buat ulang collection dan embed ulang seluruh knowledge base.
+
+**Point id = `fact_items.id`.** Konsekuensinya: re-ingest fakta yang sudah diedit memperbarui vektornya di tempat, bukan meninggalkan kembaran basi yang masih bisa terambil retrieval. Join 1:1 ke PostgreSQL jadi trivial.
+
+**Embedder default bersifat leksikal.** `EMBEDDING_PROVIDER=hash` (`hash-embed-v0`) tidak butuh API key dan deterministik, tapi mengukur kemiripan leksikal — bukan semantik. Threshold 0.80 karenanya berperilaku lebih ketat daripada nanti dengan `text-embedding-3-small`: parafrase longgar akan dijawab "belum terverifikasi", bukan dicocokkan. Angka terukur ada di [[Build_Text_Verification_Pipeline]] §3.
 
 ---
 

@@ -1,6 +1,6 @@
 # Service Health
 
-> **Scope:** MVP · **Status:** Partial — `GET /health` gateway sudah melaporkan ketersediaan PostgreSQL dan Redis.
+> **Scope:** MVP · **Status:** Implemented — keenam service diprobe gateway, dan layar `System → Service Health` sudah ada di Control Panel.
 
 Halaman System → Service Health menampilkan **ketersediaan dasar** setiap service. Tidak lebih.
 
@@ -22,17 +22,23 @@ Qdrant        ● HEALTHY
 | FastAPI Gateway | proses melayani `GET /health` | Implemented |
 | PostgreSQL | probe koneksi dari gateway | Implemented |
 | Redis | probe `PING` dari gateway | Implemented |
-| Qdrant | endpoint healthz / collection info | Planned |
-| WAHA | status engine + status sesi | Planned |
-| ML Service | readiness (model sudah dimuat), bukan sekadar liveness | Planned |
+| Qdrant | `GET /healthz` dari gateway | Implemented |
+| WAHA | `GET /ping` (satu-satunya route WAHA tanpa auth) | Implemented |
+| ML Service | `GET /v1/ready` — readiness (model sudah dimuat), bukan sekadar liveness | Implemented |
 
-Contoh respons gateway saat ini:
+Dua endpoint, dua kegunaan:
+
+- `GET /health` — probe ringkas untuk healthcheck container: `{"status":"ok","dependencies":{"database":true,"redis":true}}`. Saat ada dependency yang gagal, `status` menjadi `degraded` dan HTTP-nya `503`.
+- `GET /api/v1/system/services` — status per service untuk layar System → Service Health. Keenam probe dijalankan **konkuren**, supaya sistem yang sakit tidak butuh waktu lapor lebih lama daripada sistem yang sehat.
+
+Contoh respons layar Service Health:
 
 ```json
-{"status":"ok","dependencies":{"database":true,"redis":true}}
+{"status":"ok","degraded":[],"services":{
+  "api_gateway":{"status":"HEALTHY"},"postgres":{"status":"HEALTHY"},
+  "redis":{"status":"HEALTHY"},"qdrant":{"status":"HEALTHY"},
+  "waha":{"status":"HEALTHY"},"ml_service":{"status":"HEALTHY"}}}
 ```
-
-Saat ada dependency yang gagal, `status` menjadi `degraded`.
 
 ---
 

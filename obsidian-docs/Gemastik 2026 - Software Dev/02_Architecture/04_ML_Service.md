@@ -1,6 +1,6 @@
 # ML Service (Standalone)
 
-> **Status:** Planned. Direktori `ml-service/` belum ada di repo. Dokumen ini mendefinisikan batas tanggung jawab dan kontraknya **sebelum** kode ditulis, supaya tidak ada logika inferensi yang menyelinap ke dalam gateway dan harus dipisahkan lagi nanti.
+> **Status:** Partial (2026-08-08). Direktori `ml-service/` sudah ada dan berjalan sebagai container tersendiri. Kontrak di §4 dipakai apa adanya; yang belum ada ditandai per endpoint di tabel itu. Dokumen ini ditulis **sebelum** kodenya dibuat, supaya tidak ada logika inferensi yang menyelinap ke dalam gateway — dan urutan itu terbukti berguna: gateway sampai sekarang tidak pernah menghitung satu vektor pun.
 
 ---
 
@@ -48,16 +48,17 @@ Gateway memanggil ML Service **hanya** lewat satu modul client (`backend/app/cli
 
 Versi di path (`/v1/...`). Setiap request membawa `request_id` yang sama dengan correlation ID dari webhook asal, sehingga satu pesan bisa ditelusuri dari WAHA → gateway → worker → ML Service → baris audit.
 
-| Endpoint | Fungsi |
-| :--- | :--- |
-| `POST /v1/classify` | Klasifikasi ancaman + confidence |
-| `POST /v1/ocr` | Ekstraksi teks dari gambar/flyer |
-| `POST /v1/embed` | Teks → vektor |
-| `POST /v1/rag-query` | Embed + similarity search Qdrant + rakit konteks, satu panggilan |
-| `POST /v1/generate` | Generasi respons LLM dari konteks yang sudah dirakit |
-| `POST /v1/train` | Mulai training job (dipanggil worker, bukan request user sinkron) |
-| `POST /v1/evaluate` | Evaluasi model terhadap dataset validasi tetap |
-| `GET /v1/health` · `GET /v1/ready` | Liveness dan readiness (lihat §6) |
+| Endpoint | Fungsi | Status |
+| :--- | :--- | :--- |
+| `POST /v1/classify` | Klasifikasi ancaman + confidence | Planned — menjawab `model_not_available` (belum ada model terlatih); gateway jatuh ke Detection Rules |
+| `POST /v1/ocr` | Ekstraksi teks dari gambar/flyer | Planned — OCR di luar scope Sprint 1 |
+| `POST /v1/embed` | Teks → vektor | Implemented |
+| `POST /v1/rag-query` | Embed + similarity search Qdrant + rakit konteks, satu panggilan | Implemented |
+| `POST /v1/generate` | Generasi respons LLM dari konteks yang sudah dirakit | Implemented |
+| `POST /v1/kb/upsert` | Embed + simpan fact item ke Qdrant (ingestion) | Implemented — tidak ada di rancangan awal, ditambahkan agar gateway tidak perlu menghitung embedding sendiri |
+| `POST /v1/train` | Mulai training job (dipanggil worker, bukan request user sinkron) | Planned — Fase 4 |
+| `POST /v1/evaluate` | Evaluasi model terhadap dataset validasi tetap | Planned — Fase 4 |
+| `GET /v1/health` · `GET /v1/ready` | Liveness dan readiness (lihat §6) | Implemented |
 
 **Bentuk request/response:** `{ request_id, payload, metadata }` masuk, `{ request_id, result, confidence, model_version, latency_ms }` keluar. `model_version` wajib ada di setiap respons inference — itu yang membuat baris audit bisa menjelaskan "model mana yang memutuskan ini".
 
@@ -93,6 +94,10 @@ Model dimuat **sekali per proses saat startup**, bukan per request.
 - Registry model internal (peta `nama+versi → instance yang dimuat`) sejak model pertama, supaya "model kedua" jadi entri konfigurasi, bukan penulisan ulang.
 - `model_version` selalu ikut di respons.
 - Versi API di path sejak endpoint pertama.
+
+Ketiganya sudah ada: `ml-service/app/models/registry.py` memuat embedder dan provider LLM saat startup, `GET /v1/ready` melaporkan isinya, dan setiap respons inference membawa `model_version` (mis. `hash-embed-v0`, `template-composer-v1`, `anthropic-claude-haiku-4-5-20251001`).
+
+Provider yang dikonfigurasi tapi kehilangan API key **tidak** membuat service gagal start: ia turun ke fallback offline, mencatat alasannya di `degraded_reasons`, dan tetap `ready`. Pipeline yang tidak bisa menjawab sama sekali lebih buruk daripada pipeline yang menjawab dengan template.
 
 Detail siklus hidup model di [[07_Model_Registry_and_Deployment]].
 

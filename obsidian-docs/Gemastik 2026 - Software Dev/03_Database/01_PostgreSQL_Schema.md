@@ -13,7 +13,7 @@ Arsitektur target menempatkan domain berikut di PostgreSQL. Sebagian besar **bel
 | Users, roles, permissions | Planned | Prasyarat auth + RBAC ([[07_Users_and_Risk]]) |
 | WhatsApp sessions | Planned | Metadata sesi; state hidupnya tetap milik WAHA |
 | Threats | Planned | [[03_Threat_Monitoring]] |
-| Message metadata | Partial | `message_logs` sudah ada |
+| Message metadata | Implemented | `message_logs` ada **dan terisi** oleh worker setelah setiap pesan diproses ([[Create Audit Logging]]) |
 | Incidents | Planned | [[05_Incident_Management]] |
 | Alerts | Planned | [[04_Alert_Center]] |
 | Security policies | Planned | [[02_Security_Policies]] |
@@ -256,6 +256,8 @@ Tiga perbedaan yang disengaja antara dokumen ini dan migrasi 001:
 ---
 
 **Peringatan privasi:** `message_logs.extracted_text` menyimpan isi pesan dalam plaintext dan belum punya retention policy. Ini isu terbuka berprioritas tinggi — lihat [[01_Threat_Model_and_Data_Protection]] §5.1.
+
+Sejak 2026-08-08 kolom itu benar-benar terisi, jadi isunya berhenti bersifat teoretis. Mitigasi sementara: `LOG_MESSAGE_CONTENT=false` mematikan penulisan kolom tersebut tanpa mengorbankan sisa jejak audit (intent, risiko, similarity, latensi). Itu saklar, bukan pengganti retention policy — lihat [[Create_Audit_Logging]].
 
 ---
 

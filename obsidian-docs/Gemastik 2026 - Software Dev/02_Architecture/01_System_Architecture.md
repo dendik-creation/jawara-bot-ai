@@ -4,6 +4,8 @@
 
 Dokumen ini mendeskripsikan **arsitektur target**. Sebagian sudah berjalan, sebagian masih rencana — status per komponen ada di §7 dan di [[05_Product_Scope_and_Roadmap]].
 
+> Per 2026-08-08, seluruh kotak pada diagram di bawah sudah ada kodenya di repo, termasuk ML Service dan Control Panel. Yang tersisa adalah kedalaman tiap komponen, bukan keberadaannya.
+
 ---
 
 ## 1. High-Level Architecture
@@ -77,10 +79,10 @@ flowchart TD
     ML --> MODELS
 
     classDef planned stroke-dasharray: 5 5;
-    class ML,MODELS,FE planned;
+    class MODELS planned;
 ```
 
-Garis putus-putus = komponen yang masih **Planned** (belum ada kodenya di repo).
+Garis putus-putus = komponen yang masih **Planned** (belum ada kodenya di repo). Tersisa satu: model ML terlatih — ML Service sudah berjalan dengan embedder deterministik dan komposer respons, tapi belum ada model klasifikasi hasil training.
 
 ---
 
@@ -207,13 +209,15 @@ Keduanya menyuplai Risk Assessment; Security Policy yang memutuskan aksi akhir. 
 | Komponen | Status | Bukti / catatan |
 | :--- | :--- | :--- |
 | WAHA container | Implemented | `docker-compose.yml`, healthcheck + volume sesi |
-| FastAPI Gateway (intake) | Partial | webhook, auth `X-Api-Key`, rate limit, health; belum ada auth user/RBAC/route domain |
-| Redis (queue + rate limit) | Implemented | `app/core/rate_limit.py`, `app/services/queue.py` |
-| Celery Worker | Partial | task terdaftar & retry aktif; `run_pipeline()` masih seam kosong |
-| PostgreSQL | Partial | migrasi `001_init_schema.sql` (fact/message/user); tabel domain keamanan & AI/ML belum ada |
-| Qdrant | Partial | collection + payload index dibuat; belum ada embedding yang diisi |
-| ML Service | Planned | direktori `ml-service/` belum ada |
-| Next.js Control Panel | Planned | frontend masih scaffold `create-next-app` + shadcn |
+| FastAPI Gateway (intake) | Implemented | webhook, auth `X-Api-Key`, rate limit, health, orkestrasi pipeline, API Control Panel |
+| Redis (queue + rate limit + cache) | Implemented | `app/core/rate_limit.py`, `app/services/queue.py`, `app/core/cache.py` |
+| Celery Worker | Implemented | pipeline lengkap: preprocessing → rules → verifikasi → generate → dispatch → audit (`app/pipeline/orchestrator.py`) |
+| PostgreSQL | Partial | migrasi `001_init_schema.sql` dipakai penuh (`message_logs` terisi); tabel domain keamanan & AI/ML belum ada |
+| Qdrant | Implemented | collection + payload index + embedding knowledge terisi lewat ingestion |
+| ML Service | Partial | `ml-service/` ada: `embed`, `rag-query`, `generate`, `kb/upsert`, `health`, `ready`. `classify` menjawab `model_not_available` (belum ada model terlatih); `ocr` dan `train`/`evaluate` belum ada |
+| Next.js Control Panel | Partial | shell navigasi + Command Center + Service Health; layar lain belum ada, auth operator/RBAC belum ada |
+
+Rincian batasan tiap komponen: [[00_Sprint_1_Completion_Notes]].
 
 ---
 

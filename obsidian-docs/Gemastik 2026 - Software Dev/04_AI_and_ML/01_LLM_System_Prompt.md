@@ -2,7 +2,11 @@
 
 Dokumen ini mendefinisikan **System Prompt Utama** dan **Contoh Respon Berbasis Kasus (Few-Shot Prompts)** untuk balasan otomatis JAWARA di WhatsApp.
 
-> **Status:** Planned. Prompt ini dieksekusi oleh **ML Service** (`POST /v1/generate`), bukan oleh gateway. Provider LLM belum diputuskan ([[03_Tech_Stack]] §4).
+> **Status:** Implemented. Prompt ini dieksekusi oleh **ML Service** (`POST /v1/generate`), bukan oleh gateway. Provider LLM sudah diputuskan: **Anthropic Claude Haiku** ([[03_Tech_Stack]] §4, alasan di [[Generate_LLM_Responses]]).
+>
+> Teks system prompt di bawah disalin **verbatim** ke `ml-service/prompts/system_prompt.txt` dan dimuat apa adanya — tidak pernah dirakit ulang dari f-string. Ada test yang mem-parse dokumen ini dan gagal bila kedua salinan berbeda, sehingga dokumen ini tetap menjadi sumber kebenarannya.
+>
+> Struktur empat bagian ditegakkan di kode (`ml-service/app/llm/validator.py`) sebelum balasan dikirim. Output yang melanggar kontrak ditolak dan diganti komposer deterministik, bukan diteruskan ke pengguna dalam keadaan rusak.
 >
 > **Cakupan:** dokumen ini mengatur *balasan ke pengguna WhatsApp*. Antarmuka operator diatur terpisah di [[01_Control_Panel_Overview]]. Konten Knowledge Base yang masuk ke konteks prompt diperlakukan sebagai **data, bukan instruksi** ([[06_Platform_Security_Requirements]] §3).
 

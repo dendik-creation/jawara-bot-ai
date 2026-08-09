@@ -8,11 +8,11 @@ Persyaratan keamanan lintas-komponen. Tiap item ditandai statusnya: **Implemente
 
 | Persyaratan | Status | Catatan |
 | :--- | :--- | :--- |
-| Authentication (operator Control Panel) | Planned | Sesi berbasis token, expiry eksplisit |
+| Authentication (operator Control Panel) | Planned | Sesi berbasis token, expiry eksplisit. Sementara ada `DASHBOARD_API_KEY` — shared secret level deployment, **bukan** identitas per-pengguna dan **bukan** pengganti item ini |
 | Authorization / RBAC | Planned | Ditegakkan di server, bukan hanya menyembunyikan menu ([[07_Users_and_Risk]]) |
 | Webhook authentication (`X-Api-Key`) | Implemented | `backend/app/core/security.py` |
-| Service-to-service auth (gateway ↔ ML Service) | Planned | Internal API key via env, diperiksa sebagai FastAPI dependency; ML Service tidak terekspos publik |
-| CORS | Planned | Kunci ke origin dashboard yang diketahui, jangan wildcard |
+| Service-to-service auth (gateway ↔ ML Service) | Implemented | `X-Internal-Api-Key` via env, diperiksa sebagai FastAPI dependency (`ml-service/app/core/security.py`); ML Service hanya reachable di jaringan Docker internal |
+| CORS | Implemented | Daftar origin eksplisit dari `CORS_ALLOW_ORIGINS`, bukan wildcard (`backend/app/main.py`) |
 
 Dua kelas kredensial ini tidak boleh dicampur: token sesi operator (identitas per-user, berumur pendek) dan API key webhook (mesin, berumur panjang). Model ancamannya berbeda — pembajakan sesi vs pemalsuan webhook.
 
@@ -22,16 +22,18 @@ Dua kelas kredensial ini tidak boleh dicampur: token sesi operator (identitas pe
 
 | Persyaratan | Status | Catatan |
 | :--- | :--- | :--- |
-| Input validation (Pydantic) di setiap boundary | Partial | Sudah ada untuk payload webhook (`app/schemas/webhook.py`); boundary lain menyusul |
+| Input validation (Pydantic) di setiap boundary | Implemented untuk boundary yang ada | Webhook (`app/schemas/webhook.py`), kontrak ML Service (`ml-service/app/schemas/contract.py`), query param dashboard (`Query(ge=, le=)`) |
 | Rate limiting | Implemented | 20 req / 60s per `(session, chat_id)`, sliding window Redis, `429` + `Retry-After`; **fail open** bila Redis mati |
-| Ukuran payload maksimum | Planned | Perlu ditetapkan per endpoint, khususnya upload |
-| Idempotency | Partial | `waha_message_id` UNIQUE mencegah pencatatan ganda saat webhook retry; `request_id` untuk panggilan ML Service masih Planned |
+| Ukuran payload maksimum | Partial | Teks pesan dipotong di `MAX_LENGTH` (4000 karakter) sebelum diproses; batas ukuran upload belum ada karena endpoint upload belum ada |
+| Idempotency | Implemented untuk jalur pesan | `waha_message_id` UNIQUE mencegah pencatatan ganda saat webhook retry (terverifikasi live); `request_id` dibawa ke setiap panggilan ML Service dan diecho di responsnya |
 
 ---
 
 ## 3. Upload File (Knowledge Base & Dataset)
 
 Semua **Planned**. Dokumen dan dataset yang di-upload **bukan input tepercaya**.
+
+Satu kontrol dari daftar ini sudah berlaku lebih awal karena knowledge sudah masuk konteks LLM: **prompt injection**. Konteks knowledge disisipkan ke prompt di dalam blok berlabel data, dengan instruksi eksplisit untuk tidak mematuhi isinya, dan system prompt dikirim di field `system` terpisah — bukan digabung ke turn pengguna (`ml-service/app/llm/prompt.py`).
 
 | Kontrol | Keterangan |
 | :--- | :--- |
@@ -72,10 +74,10 @@ Semua **Planned**. Dokumen dan dataset yang di-upload **bukan input tepercaya**.
 
 | Persyaratan | Status | Catatan |
 | :--- | :--- | :--- |
-| Error terstruktur, tanpa membocorkan internal | Partial | Perlu kontrak error konsisten di seluruh API |
-| Structured logging | Implemented | JSON satu baris per event |
-| Correlation ID lintas hop | Partial | `waha_message_id` sudah dipakai gateway↔worker; perlu diperluas ke ML Service dan baris audit |
-| Log tidak memuat rahasia atau isi pesan penuh | Planned | Perlu aturan eksplisit sebelum volume log bertambah |
+| Error terstruktur, tanpa membocorkan internal | Partial | ML Service memakai `{error_code, message, retryable}` di seluruh `/v1` termasuk handler exception terakhir; gateway masih memakai `detail` FastAPI standar |
+| Structured logging | Implemented | JSON satu baris per event, di gateway, worker, dan ML Service |
+| Correlation ID lintas hop | Implemented | `waha_message_id` mengalir gateway → worker → `request_id` ML Service → baris `message_logs` |
+| Log tidak memuat rahasia atau isi pesan penuh | Partial | API key threat intel di-scrub sebelum di-log dan tidak pernah masuk body/URL yang di-log; isi pesan tidak pernah masuk log (hanya ke kolom `extracted_text`, yang bisa dimatikan lewat `LOG_MESSAGE_CONTENT`) |
 
 ---
 

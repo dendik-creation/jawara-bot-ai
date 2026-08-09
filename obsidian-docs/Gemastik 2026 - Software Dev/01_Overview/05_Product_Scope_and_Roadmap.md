@@ -31,8 +31,8 @@ Semua item di bawah berstatus **Planned** kecuali disebutkan lain.
 
 | Fitur | Dokumentasi | Status implementasi |
 | :--- | :--- | :--- |
-| Command Center | [[02_Command_Center]] | Planned |
-| Live Activity | [[02_Command_Center]] | Planned |
+| Command Center | [[02_Command_Center]] | Implemented |
+| Live Activity | [[02_Command_Center]] | Implemented — transport polling, ditandai sementara |
 | Threat Monitoring | [[03_Threat_Monitoring]] | Planned |
 | Message Inspection | [[04_Message_Inspection]] | Planned |
 | Incident Management | [[05_Incident_Management]] | Planned |
@@ -41,15 +41,15 @@ Semua item di bawah berstatus **Planned** kecuali disebutkan lain.
 | Security Policies | [[02_Security_Policies]] | Planned |
 | Detection Rules | [[03_Detection_Rules]] | Planned |
 | Alert Center | [[04_Alert_Center]] | Planned |
-| Audit Logs | [[05_Audit_Logs]] | Planned — tabel `message_logs` sudah ada, tabel audit aksi operator belum |
-| Knowledge Base | [[03_Knowledge_Base]] | Planned — collection Qdrant `fact_knowledge_base` sudah dibuat, pipeline ingestion belum |
+| Audit Logs | [[05_Audit_Logs]] | Partial — `message_logs` sudah terisi tiap pesan; tabel audit aksi operator belum ada |
+| Knowledge Base | [[03_Knowledge_Base]] | Partial — collection Qdrant terisi lewat ingestion `fact_items`; upload dokumen operator (parsing, chunking) belum ada |
 | Operator Feedback (Human-in-the-Loop) | [[04_Datasets_and_Operator_Feedback]] | Planned |
 | Dataset Management | [[04_Datasets_and_Operator_Feedback]] | Planned |
 | AI / ML Control Center | [[02_ML_Control_Center_Overview]] | Planned |
 | Training Jobs | [[05_Training_Jobs]] | Planned |
 | Model Evaluation | [[06_Model_Evaluation]] | Planned |
 | Model Registry | [[07_Model_Registry_and_Deployment]] | Planned |
-| Basic Service Health | [[08_Service_Health]] | Partial — `GET /health` gateway sudah cek PostgreSQL + Redis |
+| Basic Service Health | [[08_Service_Health]] | Implemented — enam service diprobe gateway, layar Service Health ada |
 
 Fondasi MVP yang sudah **Implemented** di repo (bukan fitur produk, tapi prasyaratnya):
 
@@ -59,6 +59,13 @@ Fondasi MVP yang sudah **Implemented** di repo (bukan fitur produk, tapi prasyar
 - Migrasi schema PostgreSQL idempotent (`backend/app/db/`)
 - Bootstrap collection Qdrant + payload index (`backend/app/vector/qdrant_setup.py`)
 - Anonimisasi `user_hash` SHA-256 bersalt (`backend/app/core/hashing.py`)
+
+Ditambahkan 2026-08-08 ([[00_Sprint_1_Completion_Notes]]):
+
+- Pipeline deteksi lengkap: normalisasi, ekstraksi URL, Detection Rules + intent routing, verifikasi RAG, reputasi URL, risk assessment, generasi balasan, dispatch WAHA, baris audit (`backend/app/pipeline/`, `backend/app/clients/`)
+- ML Service standalone dengan registry model, readiness terpisah dari liveness, dan kontrak error terstruktur (`ml-service/`)
+- Ingestion knowledge `fact_items` → Qdrant lewat ML Service (`backend/app/scripts/ingest_knowledge.py`)
+- API agregasi Control Panel + shell navigasi + Command Center + Service Health
 
 ---
 
@@ -107,16 +114,17 @@ Konsekuensi: kategori ancaman `FILE_APK` tetap **dikenali dan dicatat** oleh pip
 Urutan mengikuti dependensi teknis, bukan prioritas bisnis semata.
 
 ```text
-Fase 0 — Fondasi (sebagian sudah selesai)
+Fase 0 — Fondasi ✅ selesai
   Webhook intake, auth, rate limit, queue, worker, schema, Qdrant bootstrap
 
-Fase 1 — Pipeline deteksi
-  Preprocessing, Detection Rules, ML Service (klasifikasi), Risk Assessment,
-  Security Policy evaluation, Action, Audit trail
+Fase 1 — Pipeline deteksi ✅ sebagian besar selesai (2026-08-08)
+  ✅ Preprocessing, Detection Rules, Risk Assessment, Action, Audit trail
+  ⬜ ML Service klasifikasi berbasis model terlatih
+  ⬜ Security Policy evaluation bergradasi
 
-Fase 2 — Control Panel MVP
-  Auth + RBAC, Command Center, Threat Monitoring, Message Inspection,
-  WhatsApp Management, Service Health
+Fase 2 — Control Panel MVP  (sebagian selesai)
+  ✅ Command Center, Service Health
+  ⬜ Auth + RBAC, Threat Monitoring, Message Inspection, WhatsApp Management
 
 Fase 3 — Operasi keamanan
   Incident Management, Alert Center, Audit Logs, Users & Risk, Policies UI

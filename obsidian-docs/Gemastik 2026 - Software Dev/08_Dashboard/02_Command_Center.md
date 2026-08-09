@@ -1,6 +1,6 @@
 # Command Center & Live Activity
 
-> **Scope:** MVP · **Status:** Planned
+> **Scope:** MVP · **Status:** Implemented (2026-08-08) — layar Command Center dan Live Activity berjalan, membaca data nyata lewat endpoint agregasi gateway. Blok yang sumber datanya belum ada (incidents, alerts) menyatakan dirinya belum tersedia, bukan menampilkan nol. Detail dan batasannya: [[Implement_Command_Center_Dashboard]].
 
 Command Center adalah dashboard utama JAWARA. Fokusnya **visibilitas keamanan operasional**: apa yang sedang terjadi sekarang, seberapa parah, dan apakah sistemnya sendiri sehat.
 
@@ -76,13 +76,15 @@ Batasan privasi: feed menampilkan metadata dan klasifikasi. Isi pesan hanya tamp
 
 ## 4. Sumber Data
 
-| Blok | Sumber |
-| :--- | :--- |
-| Volume, severity, recent items | PostgreSQL (agregasi dilakukan FastAPI Gateway, bukan service analitik terpisah) |
-| Live activity | Event stream dari gateway (mekanisme transport — SSE/WebSocket/polling — belum diputuskan) |
-| Service health | Endpoint health gateway + probe per dependency ([[08_Service_Health]]) |
+| Blok | Sumber | Endpoint |
+| :--- | :--- | :--- |
+| Volume, severity, populasi | PostgreSQL, agregasi oleh FastAPI Gateway (bukan service analitik terpisah) | `GET /api/v1/dashboard/summary` |
+| Live activity | `message_logs` terbaru — metadata dan klasifikasi saja, tanpa isi pesan | `GET /api/v1/dashboard/activity` |
+| Recent threats / incidents / alerts | PostgreSQL; incidents & alerts melaporkan `available: false` (tabelnya belum ada) | `GET /api/v1/dashboard/recent` |
+| Service health | Probe konkuren enam service dari gateway ([[08_Service_Health]]) | `GET /api/v1/system/services` |
+| Active WA sessions | Daftar sesi WAHA yang dinormalisasi gateway | `GET /api/v1/whatsapp/sessions` |
 
-**Open question:** transport untuk live feed belum ditentukan. Keputusan ini mempengaruhi apakah butuh channel Redis pub/sub tambahan.
+**Open question (masih terbuka):** transport untuk live feed belum ditentukan. Implementasi sementara memakai **polling** — pilihan paling sederhana yang tidak menuntut channel Redis pub/sub tambahan. Respons `/dashboard/activity` menyertakan `"transport": "polling"` dan UI menyebut intervalnya, supaya sifat sementaranya terlihat.
 
 ---
 

@@ -49,10 +49,11 @@ sequenceDiagram
 
 ## 2. ML Service (internal)
 
-**Status:** Planned. Lihat [[04_ML_Service]] untuk kontrak lengkap.
+**Status:** Implemented (jalur pemanggilannya; isi ML Service sendiri Partial — lihat [[04_ML_Service]]).
 
-- Diakses hanya oleh gateway/worker lewat `backend/app/clients/ml_client.py`.
-- Autentikasi internal API key, jaringan Docker internal, tidak terekspos publik.
+- Diakses hanya oleh gateway/worker lewat `backend/app/clients/ml_client.py`. Tidak ada modul lain di gateway yang tahu URL atau schema ML Service.
+- Autentikasi internal API key (`X-Internal-Api-Key`), jaringan Docker internal.
+- Timeout per endpoint dipotong dari anggaran 3 detik; retry hanya untuk endpoint idempoten (`classify`, `embed`, `rag-query`). `generate` tidak pernah di-retry buta.
 
 ---
 
@@ -68,14 +69,16 @@ sequenceDiagram
 
 ## 4. Threat Intelligence Eksternal
 
-**Status:** Planned. Dua integrasi ini menyuplai sinyal indicator, bukan keputusan akhir — policy yang memutuskan aksi.
+**Status:** Implemented (kode + cache + kuota), **belum diverifikasi terhadap API nyata** — kedua API key masih kosong. Dua integrasi ini menyuplai sinyal indicator, bukan keputusan akhir.
 
 | Integrasi | Dipakai untuk | Catatan |
 | :--- | :--- | :--- |
-| Google Safe Browsing API | Reputasi URL/domain | Rate limit dan kuota harian perlu di-cache di Redis agar tidak dipanggil ulang untuk URL yang sama |
-| VirusTotal API v3 | Reputasi URL/domain/file hash | Kuota free tier ketat; cache hasil dan hormati backoff |
+| Google Safe Browsing API v4 | Reputasi URL/domain | `threatMatches:find`, batch satu request. Cache Redis per URL (`URL_SCAN_CACHE_TTL_SECONDS`), batas `URL_SCAN_MAX_URLS` per pesan, HTTP 429 tidak di-retry ([[Integrate_Safe_Browsing]]) |
+| VirusTotal API v3 | Reputasi URL/domain | Hanya **lookup**, tidak pernah submit — mengirim URL pengguna ke pihak ketiga melanggar model privasi. Tidak ada batch di v3, jadi satu request per URL; kuota free tier 4/menit, 500/hari ([[Integrate_VirusTotal]]) |
 
-Kegagalan atau timeout API eksternal **tidak boleh** memblokir pipeline: indicator ditandai `unknown`, deteksi berjalan dengan sinyal yang tersisa.
+Verdict digabung dengan aturan "yang terburuk menang": link yang ditandai hanya satu provider tetap muncul sebagai risiko tinggi, dan `UNKNOWN` tidak pernah menurunkan risiko.
+
+Kegagalan atau timeout API eksternal **tidak** memblokir pipeline: indicator ditandai `UNKNOWN`, deteksi berjalan dengan sinyal yang tersisa. Terbukti live — tanpa API key sama sekali, pesan phishing uji tetap terklasifikasi dan tercatat, dengan degradasi `url_intel_unavailable`.
 
 ---
 

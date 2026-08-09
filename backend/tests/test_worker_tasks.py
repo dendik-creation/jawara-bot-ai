@@ -1,7 +1,10 @@
 import logging
 
+import pytest
+
 from app.schemas.queue import MessageJob
 from app.worker import celery_app
+from app.worker import tasks as worker_tasks
 from app.worker.tasks import TASK_PROCESS_MESSAGE, process_message
 
 JOB = {
@@ -27,10 +30,28 @@ def test_worker_config_matches_retry_policy():
     assert celery_app.conf.task_default_queue == "jawara.messages"
 
 
-def test_valid_job_is_processed():
+@pytest.fixture(autouse=True)
+def stub_pipeline(monkeypatch):
+    """Keep the task-level tests off the real pipeline.
+
+    What is under test here is Celery wiring — registration, retry policy,
+    envelope validation, log correlation. The pipeline itself has its own suite
+    in `test_orchestrator.py`.
+    """
+    seen: list[MessageJob] = []
+
+    async def fake_pipeline(message, log_context, settings=None):
+        seen.append(message)
+        return {"status": "processed", "intent": "HEALTH_HOAX"}
+
+    monkeypatch.setattr(worker_tasks, "process_message_job", fake_pipeline)
+    return seen
+
+
+def test_valid_job_is_processed(stub_pipeline):
     result = process_message.run(JOB)
-    assert result["status"] == "accepted"
-    assert "intent_routing" in result["pending_stages"]
+    assert result["status"] == "processed"
+    assert stub_pipeline[0].waha_message_id == JOB["waha_message_id"]
 
 
 def test_malformed_job_is_discarded_without_retry():

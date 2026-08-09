@@ -1,9 +1,11 @@
+import asyncio
 import logging
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.core.config import get_settings
+from app.pipeline.orchestrator import process_message_job
 from app.schemas.queue import MessageJob
 from app.worker.celery_app import TASK_PROCESS_MESSAGE, celery_app
 
@@ -50,26 +52,17 @@ def process_message(self, job: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_pipeline(message: MessageJob, log_context: dict[str, Any]) -> dict[str, Any]:
-    """Pipeline orchestration seam.
+    """Bridge from Celery's synchronous task body into the async pipeline.
 
-    Each stage lands here as its own task completes — the worker owns the
-    ordering, the stages own the logic:
-      1. preprocessing — [[Implement Text Normalizer]], [[Implement URL Extractor]]
-      2. intent routing — [[Build Intent Router]]
-      3. verification — [[Build Text Verification Pipeline]], [[Integrate Safe Browsing]],
-         [[Integrate VirusTotal]]
-      4. response — [[Generate LLM Responses]], [[Implement WhatsApp Response Sender]]
-      5. audit log — [[Create Audit Logging]]
+    One event loop per job, created and torn down here. Celery's prefork pool
+    gives each task a fresh call stack but no loop, and a module-level loop
+    shared between jobs would keep connection pools bound to a loop that later
+    tasks are not running on.
+
+    The pipeline itself does not raise on downstream failures — it degrades and
+    records what degraded. That is deliberate: Celery's retry would re-run
+    *generation and dispatch*, so retrying a job that already replied to the user
+    would send the reply twice. Only a malformed envelope (handled above) and a
+    genuinely unexpected exception reach the retry policy.
     """
-    pending = [
-        "preprocessing",
-        "intent_routing",
-        "verification",
-        "response_generation",
-        "audit_log",
-    ]
-    logger.info(
-        "pipeline stages not yet implemented, job acked without downstream work",
-        extra={**log_context, "pending_stages": pending},
-    )
-    return {"status": "accepted", "pending_stages": pending}
+    return asyncio.run(process_message_job(message, log_context))

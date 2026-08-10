@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -144,10 +145,12 @@ function OperatorMenu() {
             }
           />
           <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuLabel className="font-normal">
-              <span className="block text-sm font-medium">{operator.full_name}</span>
-              <span className="block text-xs text-muted-foreground">{operator.email}</span>
-            </DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="font-normal">
+                <span className="block text-sm font-medium">{operator.full_name}</span>
+                <span className="block text-xs text-muted-foreground">{operator.email}</span>
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => setChangingPassword(true)}>
               <KeyRound className="size-4" />

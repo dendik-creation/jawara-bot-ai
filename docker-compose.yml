@@ -12,6 +12,7 @@ services:
       - WAHA_API_KEY=${WAHA_API_KEY}
       - WHATSAPP_HOOK_URL=http://api-gateway:8000/api/v1/webhook
       - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
+      - WHATSAPP_HOOK_CUSTOM_HEADERS=X-Api-Key:${WAHA_API_KEY}
     volumes:
       - waha_sessions:/app/.sessions
     networks:

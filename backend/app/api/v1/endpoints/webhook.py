@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.core.config import get_settings
+from app.core.dedup import is_duplicate
 from app.core.rate_limit import check_rate_limit
 from app.core.redis_client import get_redis
 from app.core.security import verify_api_key
@@ -39,6 +40,13 @@ async def receive_webhook(event: WahaWebhookEvent, response: Response) -> dict[s
             )
 
     try:
+        if waha_message_id and await is_duplicate(get_redis(), waha_message_id):
+            logger.info(
+                "duplicate webhook event, skipped",
+                extra={"waha_message_id": waha_message_id, "event": event.event},
+            )
+            response.headers["X-Queued"] = "0"
+            return {"status": "duplicate"}
         await enqueue_message(event)
         queued = True
     except Exception:

@@ -47,7 +47,7 @@ EMPTY_MENTION_REPLY = (
     "Silakan sebut saya sambil menyertakan pesannya, misalnya:\n"
     "• Balas (reply) pesan yang mencurigakan, lalu sebut saya\n"
     "• Atau tulis: @JAWARA tolong cek kabar ini ...\n\n"
-    "Saya bisa memeriksa klaim kesehatan, link mencurigakan, dan file APK."
+    "Saya bisa memeriksa klaim kesehatan dan link mencurigakan."
 )
 
 # A knowledge-base verdict is a statement about the claim, so it maps directly

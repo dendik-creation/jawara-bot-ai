@@ -124,8 +124,14 @@ class Settings(BaseSettings):
     # this is the override for when that lookup cannot be made.
     bot_whatsapp_ids: str = ""
 
-    # WhatsApp dispatch (WAHA REST).
-    waha_send_timeout_seconds: float = 5.0
+    # WhatsApp dispatch (WAHA REST). A live group send under real webhook
+    # contention measured 7.6s to complete — WEBJS resolving a group/@lid
+    # participant it has not seen before is not instant. 5s was too tight:
+    # the client aborted mid-flight, and WAHA logged the abort as "request
+    # aborted" at 5007ms, meaning it was still working, not stuck. Aborting
+    # and retrying wastes whatever progress WAHA had made, so a longer single
+    # budget beats more short ones. See [[Open_Decisions_Carried_Forward]] §3.1.
+    waha_send_timeout_seconds: float = 15.0
     waha_send_max_attempts: int = 2
     waha_send_retry_backoff_seconds: float = 0.5
     # End-to-end KPI from 03_Pitching_Narrative; exceeding it logs a warning

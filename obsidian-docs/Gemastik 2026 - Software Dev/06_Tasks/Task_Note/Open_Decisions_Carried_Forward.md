@@ -47,20 +47,15 @@ Masih terbuka ([[01_PostgreSQL_Schema]] §0, [[Build_Intent_Router]] §5).
 
 ## 3. Terbuka dan baru — muncul dari implementasi
 
-### 3.1 Anggaran latensi vs timeout kirim WAHA — **sekarang ada datanya**
+### 3.1 Anggaran latensi vs timeout kirim WAHA — **ditutup 2026-08-10**
 
-`WAHA_SEND_TIMEOUT_SECONDS` default 5 detik, sementara target end-to-end adalah 3 detik. Satu percobaan kirim yang lambat sudah melampaui seluruh anggaran.
+`WAHA_SEND_TIMEOUT_SECONDS` default 5 detik ternyata lebih pendek dari yang WAHA butuh: log WAHA sendiri menunjukkan `"request aborted"` di `responseTime: 5007` — server masih bekerja, klien yang menyerah. Kirim pertama ke grup/peserta `@lid` yang belum di-resolve WAHA butuh **~7,6 detik nyata**, bukan macet tanpa batas. Timeout dinaikkan ke **15 detik**, `WAHA_SEND_MAX_ATTEMPTS` diturunkan lagi ke **2** — dengan timeout yang cukup, satu percobaan sudah berhasil, jadi percobaan kedua kembali jadi anggaran retry genuine, bukan penambal.
 
-Dua opsi:
+Bug terpisah yang ikut ketahuan di jalur yang sama: WAHA mengirim event `message` **dan** `message.any` untuk pesan yang sama, keduanya di-enqueue sebagai job terpisah — setiap pesan diproses dua kali paralel, dua percobaan kirim rebutan slot WEBJS yang serial per sesi. Diperbaiki dengan dedup `waha_message_id` di Redis sebelum enqueue.
 
-1. Turunkan timeout kirim ke ~2 detik dan terima bahwa jaringan lambat berarti gagal kirim.
-2. Definisikan ulang KPI: 3 detik diukur sampai **dispatch dimulai**, bukan sampai WAHA membalas.
+Target KPI 3 detik end-to-end **tetap tidak terpenuhi** (aktual ~7,6 detik pada kirim pertama ke chat baru) — itu bukan lagi soal timeout salah konfigurasi, itu representasi biaya WEBJS yang sebenarnya. Opsi "hangatkan sesi berkala" atau "definisikan ulang KPI sampai dispatch dimulai" masih relevan kalau angka itu perlu dikejar lebih jauh, tapi di luar cakupan perbaikan ini.
 
-Pengukuran live 2026-08-09 ([[00_Sprint_2_Completion_Notes]] §3) menambah fakta yang memberatkan opsi 1: dua percobaan pertama ke sesi WhatsApp yang baru idle habis waktu di 5 detik, dua kali, sebelum percobaan ketiga berhasil — dan yang berhasil pun 3.571 ms, di atas target. Panggilan langsung ke WAHA dari host 0,11 detik, jadi bukan kodenya. Timeout 2 detik akan membuat pesan pertama setelah idle selalu gagal terkirim.
-
-Opsi ketiga yang muncul dari data itu: pertahankan timeout 5 detik, tapi hangatkan sesi (ping berkala) supaya biaya bangun tidak dibayar oleh pesan pengguna pertama.
-
-Detail pengukuran di [[Implement_WhatsApp_Response_Sender]] §3.
+Detail pengukuran dan commit: [[Implement_WhatsApp_Response_Sender]] §3.
 
 ### 3.2 ~~Auth Control Panel sebelum ekspos publik~~ → **ditutup 2026-08-09**
 

@@ -86,6 +86,14 @@ Konsekuensi yang perlu diputuskan sebelum produksi: **timeout kirim 5 detik saja
 
 Itu mematikan opsi "turunkan timeout ke ~2 detik": pesan pertama setelah idle akan selalu gagal terkirim. Opsi yang tersisa: definisikan ulang KPI sampai dispatch dimulai, atau hangatkan sesi secara berkala supaya biaya bangun tidak ditanggung pesan pengguna.
 
+> **Pembaruan 2026-08-10 — akar masalah sebenarnya ditemukan, diperbaiki.** Diagnosis di atas ("sesi idle") ternyata cuma separuh benar. Log WAHA sendiri menunjukkan `"request aborted"` pada `responseTime: 5007` — WAHA **masih memproses** `/api/sendText` ketika klien (httpx) memutus koneksi tepat di detik ke-5. Bukan macet, cuma butuh waktu lebih lama dari yang diberi. Tes dengan timeout longgar (30 detik, 1 percobaan) membuktikan durasi asli: **7,6 detik** untuk kirim pertama ke grup/peserta `@lid` yang belum pernah di-resolve WAHA sebelumnya. Isolated script (tanpa beban webhook nyata) selalu selesai <50ms — sinyal bahwa lambatnya WAHA hanya muncul di bawah beban webhook sungguhan, bukan sesuatu yang bisa direproduksi lewat panggilan manual.
+>
+> Bug kedua yang ikut ketahuan: WAHA mengirim event `message` **dan** `message.any` untuk pesan masuk yang sama, dan gateway meng-enqueue keduanya sebagai job terpisah — setiap pesan diproses dua kali paralel, dua kirim balasan bersamaan ke chat yang sama, saling rebutan slot WEBJS yang serial per sesi. Diperbaiki dengan dedup `waha_message_id` di Redis sebelum enqueue (`backend/app/core/dedup.py`, TTL 600 detik, fail-open kalau Redis mati).
+>
+> Konsekuensinya, strategi "retry pendek berkali-kali" itu sendiri kontraproduktif: tiap abort di detik ke-5 membuang progres yang sudah dikerjakan WAHA, jadi 3× percobaan 5 detik (15 detik total) tetap gagal semua — bukan makin dekat ke sukses. Fix: `WAHA_SEND_TIMEOUT_SECONDS` 5→**15**, `WAHA_SEND_MAX_ATTEMPTS` kembali ke **2** (sekarang anggaran retry asli, bukan penambal timeout pendek).
+>
+> Terverifikasi live tiga kali berturut-turut di grup uji sungguhan: `response_dispatched: true`, `response_latency_ms` 7592 / 7519 / 7587, `degradations: []` pada kasus reply-to-bot. Detail commit: `141e1fd fix(pipeline): stop group replies from dropping under real WAHA load`. Keputusan di [[Open_Decisions_Carried_Forward]] §3.1 ditutup.
+
 ---
 
 ## 4. Efek samping yang sudah ditangani

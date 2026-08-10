@@ -188,6 +188,11 @@ export const api = {
     }),
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
   me: (signal?: AbortSignal) => get<Operator>("/api/v1/auth/me", signal),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/api/v1/auth/change-password", {
+      method: "POST",
+      body: { current_password: currentPassword, new_password: newPassword },
+    }),
 
   summary: (signal?: AbortSignal) => get<DashboardSummary>("/api/v1/dashboard/summary", signal),
   activity: (limit = 15, signal?: AbortSignal) =>

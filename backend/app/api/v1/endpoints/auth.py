@@ -18,7 +18,7 @@ from app.core.config import get_settings
 from app.core.rate_limit import LOGIN_KEY_PREFIX, check_rate_limit
 from app.core.redis_client import get_redis
 from app.core.security import bearer_token, require_operator
-from app.schemas.auth import LoginRequest, LoginResponse, OperatorOut
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, LoginResponse, OperatorOut
 from app.services import auth
 from app.services.auth import AuthUnavailableError, Operator
 
@@ -103,6 +103,40 @@ async def logout(
     token = bearer_token(authorization)
     if token:
         await auth.revoke_session(token, get_settings())
+
+
+@router.post("/auth/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    payload: ChangePasswordRequest,
+    operator: Operator = Depends(require_operator),
+) -> None:
+    """Self-service password change.
+
+    Requires the current password even though the session already proves
+    identity: a session left open on a shared machine should not be enough on
+    its own to permanently take over the account.
+    """
+    settings = get_settings()
+    try:
+        verified = await auth.authenticate(operator.email, payload.current_password, settings)
+    except AuthUnavailableError:
+        logger.error("change-password failed: account store unreachable", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication backend unavailable",
+        ) from None
+
+    if verified is None:
+        # 400, not 401: the session itself is fine (`require_operator` already
+        # passed). A 401 here would make the frontend's blanket "session
+        # expired, log out" handling fire on a simple typo in the old password.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    await auth.set_password(operator.email, payload.new_password, settings)
+    logger.info("password changed", extra={"operator_id": operator.id})
 
 
 @router.get("/auth/me", response_model=OperatorOut)

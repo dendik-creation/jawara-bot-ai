@@ -3,9 +3,10 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import * as React from "react"
-import { ChevronsUpDown, LogOut, ShieldCheck } from "lucide-react"
+import { ChevronsUpDown, KeyRound, LogOut, ShieldCheck } from "lucide-react"
 
 import { useAuth } from "@/components/auth/auth-provider"
+import { ChangePasswordDialog } from "@/components/auth/change-password-dialog"
 import { NAVIGATION } from "@/components/layout/navigation"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -120,6 +121,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function OperatorMenu() {
   const { operator, signOut } = useAuth()
   const [signingOut, setSigningOut] = React.useState(false)
+  const [changingPassword, setChangingPassword] = React.useState(false)
 
   if (!operator) return null
 
@@ -129,7 +131,7 @@ function OperatorMenu() {
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <SidebarMenuButton size="lg" tooltip={operator.full_name}>
+              <SidebarMenuButton size="lg">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-muted text-xs font-medium">
                   {initials(operator.full_name)}
                 </div>
@@ -147,6 +149,11 @@ function OperatorMenu() {
               <span className="block text-xs text-muted-foreground">{operator.email}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setChangingPassword(true)}>
+              <KeyRound className="size-4" />
+              Ganti kata sandi
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={signingOut}
               onClick={() => {
@@ -160,6 +167,7 @@ function OperatorMenu() {
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
+      <ChangePasswordDialog open={changingPassword} onOpenChange={setChangingPassword} />
     </SidebarMenu>
   )
 }

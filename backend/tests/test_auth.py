@@ -243,3 +243,77 @@ def test_me_returns_the_signed_in_operator(signed_in):
 
 def test_logout_requires_a_session():
     assert client.post("/api/v1/auth/logout").status_code == 401
+
+
+# --------------------------------------------------------------------------
+# Change password
+# --------------------------------------------------------------------------
+
+
+def test_change_password_verifies_the_current_password_first(monkeypatch, signed_in):
+    authenticate = AsyncMock(return_value=OPERATOR)
+    set_password = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.auth.authenticate", authenticate)
+    monkeypatch.setattr("app.services.auth.set_password", set_password)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": "Bearer tok-123"},
+        json={"current_password": "old-password", "new_password": "new-password-2026"},
+    )
+
+    assert response.status_code == 204
+    authenticate.assert_awaited_once()
+    assert authenticate.await_args.args[0] == OPERATOR.email
+    assert authenticate.await_args.args[1] == "old-password"
+    set_password.assert_awaited_once()
+    assert set_password.await_args.args[0] == OPERATOR.email
+    assert set_password.await_args.args[1] == "new-password-2026"
+
+
+def test_change_password_rejects_a_wrong_current_password(monkeypatch, signed_in):
+    monkeypatch.setattr("app.services.auth.authenticate", AsyncMock(return_value=None))
+    set_password = AsyncMock()
+    monkeypatch.setattr("app.services.auth.set_password", set_password)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": "Bearer tok-123"},
+        json={"current_password": "wrong-password", "new_password": "new-password-2026"},
+    )
+
+    assert response.status_code == 400
+    set_password.assert_not_awaited()
+
+
+def test_change_password_reports_503_when_the_account_store_is_down(monkeypatch, signed_in):
+    monkeypatch.setattr(
+        "app.services.auth.authenticate", AsyncMock(side_effect=AuthUnavailableError("down"))
+    )
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": "Bearer tok-123"},
+        json={"current_password": "old-password", "new_password": "new-password-2026"},
+    )
+
+    assert response.status_code == 503
+
+
+def test_change_password_requires_a_session():
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "old-password", "new_password": "new-password-2026"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_change_password_validates_the_request_shape(signed_in):
+    response = client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": "Bearer tok-123"},
+        json={"current_password": "old-password", "new_password": "short"},
+    )
+
+    assert response.status_code == 422

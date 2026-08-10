@@ -29,7 +29,7 @@ export const NAVIGATION: NavSection[] = [
     items: [
       { label: "Live Activity", href: "/" },
       { label: "Threats", href: null },
-      { label: "Messages", href: null },
+      { label: "Messages", href: "/messages" },
       { label: "Incidents", href: null },
     ],
   },

@@ -79,12 +79,14 @@ Batasan privasi: feed menampilkan metadata dan klasifikasi. Isi pesan hanya tamp
 | Blok | Sumber | Endpoint |
 | :--- | :--- | :--- |
 | Volume, severity, populasi | PostgreSQL, agregasi oleh FastAPI Gateway (bukan service analitik terpisah) | `GET /api/v1/dashboard/summary` |
-| Live activity | `message_logs` terbaru — metadata dan klasifikasi saja, tanpa isi pesan | `GET /api/v1/dashboard/activity` |
+| Live activity | `message_logs` terbaru untuk muat awal, lalu event baru lewat push — metadata dan klasifikasi saja, tanpa isi pesan | `GET /api/v1/dashboard/activity` (muat awal) + `GET /api/v1/dashboard/activity/stream` (SSE) |
 | Recent threats / incidents / alerts | PostgreSQL; incidents & alerts melaporkan `available: false` (tabelnya belum ada) | `GET /api/v1/dashboard/recent` |
 | Service health | Probe konkuren enam service dari gateway ([[08_Service_Health]]) | `GET /api/v1/system/services` |
 | Active WA sessions | Daftar sesi WAHA yang dinormalisasi gateway | `GET /api/v1/whatsapp/sessions` |
 
-**Open question (masih terbuka):** transport untuk live feed belum ditentukan. Implementasi sementara memakai **polling** — pilihan paling sederhana yang tidak menuntut channel Redis pub/sub tambahan. Respons `/dashboard/activity` menyertakan `"transport": "polling"` dan UI menyebut intervalnya, supaya sifat sementaranya terlihat.
+**Transport — ditutup 2026-08-10:** SSE lewat Redis Pub/Sub (channel `dashboard:activity`), bukan polling atau WebSocket. `record_message()` publish satu event per baris yang berhasil ditulis; `GET /api/v1/dashboard/activity/stream` fan-out ke operator yang sedang membuka Command Center. WebSocket tidak dipilih karena arahnya cuma satu (server → browser, tidak ada pesan balik dari klien); polling tidak dipilih karena sudah ada infrastruktur Redis yang bisa push tanpa biaya request berulang.
+
+Satu kendala nyata: `EventSource` bawaan browser tidak bisa kirim header `Authorization`, dan gateway ini tidak punya sesi cookie sebagai fallback. Frontend baca stream manual lewat `fetch()` + `ReadableStream` (`lib/api.ts::streamActivity`), bukan `EventSource` — taruh token di URL berarti bocor ke access log gateway/proxy. Detail: [[Open_Decisions_Carried_Forward]] §2.2.
 
 ---
 

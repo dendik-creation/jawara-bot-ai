@@ -29,19 +29,39 @@ Indeks sprint: [[00_Sprint_2_Completion_Notes]].
 
 Lihat §1.
 
-### 2.2 Transport live activity feed
+### 2.2 Transport live activity feed — **ditutup 2026-08-10**
 
-Masih terbuka. Sementara: polling ([[Implement_Command_Center_Dashboard]] §5).
+**SSE lewat Redis Pub/Sub**, bukan WebSocket atau polling. `message_log.record_message()` publish ke channel `dashboard:activity` setelah setiap insert sukses; `GET /api/v1/dashboard/activity/stream` fan-out event itu ke operator yang terhubung. `GET /api/v1/dashboard/activity` biasa tetap ada, sekarang perannya cuma muat awal (Pub/Sub tidak punya histori — klien yang baru konek tidak dapat apa pun yang terjadi sebelum ia terhubung).
 
-### 2.3 Retention policy `message_logs.extracted_text`
+WebSocket ditolak: arah datanya cuma satu (server → browser), jadi full-duplex WebSocket menambah kompleksitas tanpa dipakai. Kendala nyata yang muncul saat implementasi: `EventSource` bawaan browser tidak bisa kirim header `Authorization`, dan gateway ini murni bearer-token (tidak ada sesi cookie). Taruh token di query string URL akan bocor ke access log gateway/proxy — jadi frontend baca SSE manual lewat `fetch()` + `ReadableStream.getReader()` (`frontend/lib/api.ts::streamActivity`), bukan `new EventSource(...)`. Diverifikasi live: publish manual ke Redis muncul di stream dalam hitungan milidetik.
 
-Masih terbuka, dan sekarang lebih mendesak karena kolom itu benar-benar terisi. Mitigasi sementara: flag `LOG_MESSAGE_CONTENT` ([[Create_Audit_Logging]] §3).
+Detail: [[Implement_Command_Center_Dashboard]] §5, `backend/app/api/v1/endpoints/dashboard.py::dashboard_activity_stream`.
 
-Yang perlu diputuskan: berapa lama disimpan, siapa yang boleh membaca, bagaimana penghapusan dijalankan (job terjadwal vs partisi tabel).
+### 2.3 Retention policy `message_logs.extracted_text` — **ditutup 2026-08-10**
 
-### 2.4 Pemetaan kategori ancaman Control Panel ke `category_enum`
+Keputusan: **simpan tanpa batas waktu, bisa dibaca operator manapun (tidak ada tingkatan RBAC), dihapus hanya lewat aksi eksplisit per baris** — bukan job terjadwal atau partisi tabel. `LOG_MESSAGE_CONTENT` ([[Create_Audit_Logging]] §3) tetap ada sebagai saklar deployment-level yang independen dari keputusan ini.
 
-Masih terbuka ([[01_PostgreSQL_Schema]] §0, [[Build_Intent_Router]] §5).
+Dibangun sebagai layar Message Inspection minimal ([[04_Message_Inspection]]): `GET /api/v1/dashboard/messages` (satu-satunya endpoint Control Panel yang mengembalikan `extracted_text` — semua endpoint lain di `services/dashboard.py` sengaja tidak pernah menyeleksinya) dan `DELETE /api/v1/dashboard/messages/{id}`, keduanya di belakang `require_operator` yang sama seperti seluruh router. Frontend: `/messages`, dengan konfirmasi hapus (`AlertDialog`) karena aksinya permanen.
+
+Field lengkap di spesifikasi awal ([[04_Message_Inspection]] §1 — applied detection rule, model version, related threat/incident) belum ada kolomnya di skema dan tidak dibangun di sini; itu perluasan terpisah, bukan bagian dari menutup keputusan retention.
+
+### 2.4 Pemetaan kategori ancaman Control Panel ke `category_enum` — **ditutup 2026-08-10**
+
+Opsi yang diambil: **dua level**, bukan perluasan enum atau tabel referensi. `category_enum` tetap murni untuk intent router dan `fact_items` (terkunci ke `tests/test_categories.py`, yang mem-parse skema SQL); kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) jadi enum Python terpisah, `ThreatCategory` di `backend/app/pipeline/threat_categories.py`, dengan fungsi murni `to_threat_category()` yang memetakan satu arah.
+
+Pemetaannya lossy di kedua arah dan itu disengaja, bukan celah:
+
+| `Category` | → `ThreatCategory` |
+| :--- | :--- |
+| `HEALTH_HOAX` | `OTHER` |
+| `FINANCIAL_FRAUD` | `SCAM` |
+| `GENERAL_NEWS` | `OTHER` |
+| `PHISHING_LINK` | `PHISHING` |
+| `FILE_APK` | `MALICIOUS_LINK` |
+
+`SOCIAL_ENGINEERING`, `IMPERSONATION`, dan `SPAM` belum bisa dicapai dari `Category` manapun — pipeline belum punya sinyal untuk membedakannya. Mereka tetap ada di `ThreatCategory` supaya filter dropdown di Control Panel lengkap, dan menambah sinyalnya nanti adalah perubahan mapping, bukan enum baru.
+
+Sudah dipakai di `dashboard.recent_activity` dan `dashboard.recent_threats` (field `threat_category`), ditampilkan di `activity-feed.tsx` dan `recent-panels.tsx`. Test: `tests/test_threat_categories.py`.
 
 ---
 

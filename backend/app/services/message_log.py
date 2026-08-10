@@ -19,17 +19,27 @@ is stored in plaintext with no retention window
 column off entirely for deployments that want the trail without the content.
 """
 
+import json
 import logging
 from dataclasses import dataclass
 
 import asyncpg
 
 from app.core.config import Settings, get_settings
+from app.core.redis_client import get_redis
 from app.pipeline.categories import Category, InputType, RiskLevel
+from app.pipeline.threat_categories import to_threat_category
 
 logger = logging.getLogger("app.services.message_log")
 
 GROUP_SUFFIX = "@g.us"
+
+# Live Activity push ([[Open_Decisions_Carried_Forward]] §2.2). Redis Pub/Sub,
+# not a queue: a dropped or absent subscriber costs nothing, because pub/sub
+# delivers only to whoever is connected right now. Redis is already
+# infrastructure the pipeline depends on, so this needed no new component.
+ACTIVITY_CHANNEL = "dashboard:activity"
+_THREAT_LEVELS = ("HIGH", "MEDIUM")
 
 UPSERT_SUBSCRIPTION = """
 INSERT INTO user_subscriptions (user_hash, chat_type)
@@ -46,7 +56,7 @@ INSERT INTO message_logs (
 VALUES ($1, $2, $3, $4, $5::input_type_enum, $6, $7::category_enum,
         $8::risk_level_enum, $9, $10, $11)
 ON CONFLICT (waha_message_id) DO NOTHING
-RETURNING id
+RETURNING id, created_at
 """
 
 
@@ -113,4 +123,34 @@ async def record_message(
             "message already logged, skipping duplicate",
             extra={"waha_message_id": entry.waha_message_id},
         )
+        return inserted
+
+    await _publish_activity(entry, row)
     return inserted
+
+
+async def _publish_activity(entry: MessageLogEntry, row: asyncpg.Record) -> None:
+    """Best-effort push to the Live Activity feed. Never raises.
+
+    A message is already durably logged by the time this runs — losing the
+    live-feed event because Redis hiccuped must not fail the pipeline or
+    retry the whole message; the row is still there for the next poll of
+    `/dashboard/activity`.
+    """
+    event = {
+        "id": str(row["id"]),
+        "at": row["created_at"].isoformat(),
+        "event": "THREAT_DETECTED" if entry.risk_score.value in _THREAT_LEVELS else "MESSAGE_ANALYZED",
+        "session": entry.waha_session_id,
+        "chat_type": entry.chat_type,
+        "input_type": entry.input_type.value,
+        "intent": entry.detected_intent.value if entry.detected_intent else None,
+        "threat_category": to_threat_category(entry.detected_intent).value,
+        "risk": entry.risk_score.value,
+        "similarity_score": entry.similarity_score,
+        "latency_ms": entry.response_latency_ms,
+    }
+    try:
+        await get_redis().publish(ACTIVITY_CHANNEL, json.dumps(event))
+    except Exception:  # noqa: BLE001
+        logger.warning("activity feed publish failed", extra={"waha_message_id": entry.waha_message_id}, exc_info=True)

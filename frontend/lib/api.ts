@@ -53,6 +53,7 @@ export type ActivityItem = {
   chat_type: string
   input_type: string
   intent: string | null
+  threat_category: string
   risk: RiskLevel
   similarity_score: number | null
   latency_ms: number | null
@@ -73,6 +74,7 @@ export type ThreatItem = {
   session: string
   chat_type: string
   intent: string | null
+  threat_category: string
   risk: RiskLevel
 }
 
@@ -88,6 +90,27 @@ export type ServiceHealth = {
   status: "ok" | "degraded"
   degraded: string[]
   services: Record<string, { status: ServiceStatus; detail: Record<string, unknown> }>
+}
+
+export type MessageLogItem = {
+  id: string
+  at: string
+  session: string
+  chat_type: string
+  input_type: string
+  extracted_text: string | null
+  intent: string | null
+  threat_category: string
+  risk: RiskLevel
+  similarity_score: number | null
+  latency_ms: number | null
+}
+
+export type MessageLogs = {
+  available: boolean
+  reason?: string
+  total: number
+  items: MessageLogItem[]
 }
 
 export type WhatsAppSessions = {
@@ -118,7 +141,7 @@ export class UnauthorizedError extends GatewayError {
 async function request<T>(
   path: string,
   { method = "GET", body, signal, auth = true }: {
-    method?: "GET" | "POST"
+    method?: "GET" | "POST" | "DELETE"
     body?: unknown
     signal?: AbortSignal
     auth?: boolean
@@ -179,6 +202,74 @@ function get<T>(path: string, signal?: AbortSignal) {
   return request<T>(path, { signal })
 }
 
+/**
+ * Live Activity push over SSE, read by hand rather than `EventSource`.
+ *
+ * `EventSource` cannot send an `Authorization` header, and this gateway has no
+ * cookie session to fall back on — every other call in this file proves that.
+ * Putting the bearer token in the URL instead would leak it into server and
+ * proxy access logs, which is worse than the manual `ReadableStream` parsing
+ * below. See `app/api/v1/endpoints/dashboard.py::dashboard_activity_stream`.
+ *
+ * Resolves when the stream ends (server closed it, or `signal` aborted);
+ * rejects on a connection or auth failure. The caller decides whether to
+ * reconnect — this function makes exactly one attempt.
+ */
+async function streamActivity(onEvent: (item: ActivityItem) => void, signal: AbortSignal): Promise<void> {
+  const token = getToken()
+  if (!token) throw new UnauthorizedError("belum masuk")
+
+  let response: Response
+  try {
+    response = await fetch(`${API_URL}/api/v1/dashboard/activity/stream`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+      cache: "no-store",
+    })
+  } catch (error) {
+    throw new GatewayError(error instanceof Error ? error.message : "gateway unreachable")
+  }
+
+  if (response.status === 401) {
+    onUnauthorized()
+    throw new UnauthorizedError()
+  }
+  if (!response.ok || !response.body) {
+    throw new GatewayError(await errorDetail(response, `gateway returned ${response.status}`), response.status)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) return
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf("\n\n")
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      boundary = buffer.indexOf("\n\n")
+
+      const data = rawEvent
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n")
+      if (!data) continue // keep-alive comment line (`: keep-alive`)
+
+      try {
+        onEvent(JSON.parse(data) as ActivityItem)
+      } catch {
+        // One malformed event must not kill a connection carrying many good
+        // ones — drop it and keep reading.
+      }
+    }
+  }
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<LoginResult>("/api/v1/auth/login", {
@@ -200,4 +291,10 @@ export const api = {
   recent: (signal?: AbortSignal) => get<RecentPanels>("/api/v1/dashboard/recent", signal),
   services: (signal?: AbortSignal) => get<ServiceHealth>("/api/v1/system/services", signal),
   sessions: (signal?: AbortSignal) => get<WhatsAppSessions>("/api/v1/whatsapp/sessions", signal),
+
+  messages: (limit = 25, offset = 0, signal?: AbortSignal) =>
+    get<MessageLogs>(`/api/v1/dashboard/messages?limit=${limit}&offset=${offset}`, signal),
+  deleteMessage: (id: string) =>
+    request<void>(`/api/v1/dashboard/messages/${id}`, { method: "DELETE" }),
+  streamActivity,
 }

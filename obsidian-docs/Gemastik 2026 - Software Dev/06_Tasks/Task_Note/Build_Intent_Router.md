@@ -59,9 +59,9 @@ Hal yang sama dilakukan untuk `risk_level_enum`.
 
 ---
 
-## 5. Keputusan terbuka yang tetap terbuka
+## 5. ~~Keputusan terbuka yang tetap terbuka~~ → **ditutup 2026-08-10**
 
-[[01_PostgreSQL_Schema]] §0 mencatat bahwa kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) belum dipetakan ke `category_enum`. Sprint ini **tidak** memutuskannya — router tetap memakai `category_enum` generasi pertama.
+[[01_PostgreSQL_Schema]] §0 mencatat bahwa kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) belum dipetakan ke `category_enum`. Router ini tetap memakai `category_enum` generasi pertama tanpa perubahan — pemetaannya ada satu lapis di atas, sebagai fungsi murni terpisah (`app/pipeline/threat_categories.py`), bukan di router. Detail: [[Open_Decisions_Carried_Forward]] §2.4.
 
 Tiga opsi yang masih berdiri: perluas enum, ganti dengan tabel referensi, atau pertahankan dua level (intent pipeline vs kategori ancaman). Lihat [[Open_Decisions_Carried_Forward]].
 

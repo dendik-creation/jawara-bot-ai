@@ -32,7 +32,10 @@ export function RecentPanels({ intervalMs = 20000 }: { intervalMs?: number }) {
             <ul className="flex flex-col gap-2">
               {data.threats.items.map((threat) => (
                 <li key={threat.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="truncate">{threat.intent ?? "UNCLASSIFIED"}</span>
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate">{threat.intent ?? "UNCLASSIFIED"}</span>
+                    <span className="truncate text-xs text-muted-foreground">{threat.threat_category}</span>
+                  </div>
                   <Badge variant={riskVariant(threat.risk)}>{threat.risk}</Badge>
                 </li>
               ))}

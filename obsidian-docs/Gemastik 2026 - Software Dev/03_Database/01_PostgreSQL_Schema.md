@@ -30,7 +30,7 @@ Arsitektur target menempatkan domain berikut di PostgreSQL. Sebagian besar **bel
 
 **Catatan terminologi kedua — "operator" vs "user":** tabel login sengaja bernama `operators`, bukan `users`. Di schema ini `user_hash` sudah berarti **pengguna akhir WhatsApp**, yang anonim by design dan tidak pernah punya akun. Dua arti "user" dalam satu schema pada akhirnya akan bertemu di satu query.
 
-**Catatan terminologi:** `category_enum` saat ini memuat kategori pipeline generasi pertama (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`). Kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) belum dipetakan ke enum ini — **keputusan terbuka**: perluas enum, ganti dengan tabel referensi, atau pertahankan dua level (intent pipeline vs kategori ancaman).
+**Catatan terminologi:** `category_enum` memuat kategori pipeline generasi pertama (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`) dan **tidak berubah**. Kategori ancaman Control Panel (Phishing, Scam, Social Engineering, Malicious Link, Impersonation, Spam, Other) dipetakan satu arah dari enum ini lewat `app/pipeline/threat_categories.py` — dua level, bukan perluasan enum atau tabel referensi. Detail dan alasan: [[Open_Decisions_Carried_Forward]] §2.4.
 
 ---
 

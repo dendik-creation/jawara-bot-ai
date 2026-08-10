@@ -21,6 +21,7 @@ from typing import Any
 import asyncpg
 
 from app.core.config import Settings, get_settings
+from app.pipeline.threat_categories import to_threat_category
 
 logger = logging.getLogger("app.services.dashboard")
 
@@ -83,6 +84,25 @@ ORDER BY created_at DESC
 LIMIT $2
 """
 
+MESSAGES_SQL = """
+SELECT
+    id,
+    created_at,
+    waha_session_id,
+    chat_type,
+    input_type::text AS input_type,
+    extracted_text,
+    detected_intent::text AS detected_intent,
+    risk_score::text AS risk_score,
+    similarity_score,
+    response_latency_ms
+FROM message_logs
+ORDER BY created_at DESC
+LIMIT $1 OFFSET $2
+"""
+
+MESSAGES_COUNT_SQL = "SELECT count(*) FROM message_logs"
+
 
 async def _connect(settings: Settings) -> asyncpg.Connection:
     return await asyncpg.connect(settings.database_url, timeout=5)
@@ -139,6 +159,7 @@ async def recent_activity(limit: int | None = None, settings: Settings | None = 
             "chat_type": row["chat_type"],
             "input_type": row["input_type"],
             "intent": row["detected_intent"],
+            "threat_category": to_threat_category(row["detected_intent"]).value,
             "risk": row["risk_score"],
             "similarity_score": row["similarity_score"],
             "latency_ms": row["response_latency_ms"],
@@ -162,10 +183,64 @@ async def recent_threats(limit: int = 10, settings: Settings | None = None) -> l
             "session": row["waha_session_id"],
             "chat_type": row["chat_type"],
             "intent": row["detected_intent"],
+            "threat_category": to_threat_category(row["detected_intent"]).value,
             "risk": row["risk_score"],
         }
         for row in rows
     ]
+
+
+async def list_messages(
+    limit: int = 25, offset: int = 0, settings: Settings | None = None
+) -> dict[str, Any]:
+    """Message Inspection ([[04_Message_Inspection]]) — the one query in this
+    module that selects `extracted_text`.
+
+    Every other function here follows "never return message content"
+    deliberately, because they serve screens with no reason to show it. This
+    one is the screen whose entire purpose is showing it to a signed-in
+    operator — the retention decision ([[Open_Decisions_Carried_Forward]]
+    §2.3) settled on "keep it, readable by any operator, deleted only by
+    explicit action" rather than a time-based policy.
+    """
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        rows = await conn.fetch(MESSAGES_SQL, limit, offset)
+        total = await conn.fetchval(MESSAGES_COUNT_SQL)
+    finally:
+        await conn.close()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": str(row["id"]),
+                "at": row["created_at"].isoformat(),
+                "session": row["waha_session_id"],
+                "chat_type": row["chat_type"],
+                "input_type": row["input_type"],
+                "extracted_text": row["extracted_text"],
+                "intent": row["detected_intent"],
+                "threat_category": to_threat_category(row["detected_intent"]).value,
+                "risk": row["risk_score"],
+                "similarity_score": row["similarity_score"],
+                "latency_ms": row["response_latency_ms"],
+            }
+            for row in rows
+        ],
+    }
+
+
+async def delete_message(message_id: str, settings: Settings | None = None) -> bool:
+    """Remove one message log row. Returns False if it was already gone."""
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        result = await conn.execute("DELETE FROM message_logs WHERE id = $1", message_id)
+    finally:
+        await conn.close()
+    return result.endswith(" 1")
 
 
 def unavailable(reason: str) -> dict[str, Any]:

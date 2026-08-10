@@ -36,7 +36,7 @@ Layar tempat operator memantau seluruh ancaman yang terdeteksi platform.
 
 Kategori bersifat *extensible* — penambahan kategori adalah perubahan data + rule, bukan perubahan arsitektur.
 
-> Kategori historis pipeline (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`) masih hidup di enum `category_enum` PostgreSQL saat ini. Pemetaan antara enum lama dan kategori ancaman di atas belum diputuskan — lihat [[01_PostgreSQL_Schema]].
+> Kategori historis pipeline (`HEALTH_HOAX`, `FINANCIAL_FRAUD`, `GENERAL_NEWS`, `PHISHING_LINK`, `FILE_APK`) masih hidup di enum `category_enum` PostgreSQL. Pemetaan ke kategori ancaman di atas **sudah dipetakan** 2026-08-10 — dua level, bukan penggabungan enum. Detail: [[Open_Decisions_Carried_Forward]] §2.4.
 
 ---
 

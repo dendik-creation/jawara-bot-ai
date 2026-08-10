@@ -79,7 +79,7 @@ def test_summary_returns_command_center_metrics(stub_queries):
 def test_activity_feed_never_exposes_message_content(stub_queries):
     body = client.get("/api/v1/dashboard/activity").json()
 
-    assert body["transport"] == "polling"
+    assert body["transport"] == "sse"
     assert "extracted_text" not in str(body)
     assert body["items"][0]["event"] == "THREAT_DETECTED"
 
@@ -112,5 +112,75 @@ def test_service_health_lists_every_dependency(monkeypatch):
 
     assert body["status"] == "degraded"
     assert "ml_service" in body["degraded"]
+
+
+# --------------------------------------------------------------------------
+# Message Inspection — the one screen allowed to read extracted_text
+# --------------------------------------------------------------------------
+
+MESSAGES = {
+    "total": 1,
+    "items": [
+        {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "at": "2026-08-10T10:00:00+00:00",
+            "session": "default",
+            "chat_type": "GROUP",
+            "input_type": "TEXT",
+            "extracted_text": "air rebusan daun kitolod bisa sembuhkan katarak",
+            "intent": "HEALTH_HOAX",
+            "threat_category": "OTHER",
+            "risk": "MEDIUM",
+            "similarity_score": 0.91,
+            "latency_ms": 3571,
+        }
+    ],
+}
+
+
+def test_messages_endpoint_returns_extracted_text(monkeypatch):
+    monkeypatch.setattr("app.services.dashboard.list_messages", AsyncMock(return_value=MESSAGES))
+
+    body = client.get("/api/v1/dashboard/messages").json()
+
+    assert body["available"] is True
+    assert body["total"] == 1
+    assert "kitolod" in body["items"][0]["extracted_text"]
+
+
+def test_messages_endpoint_reports_unavailable_on_db_outage(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.dashboard.list_messages", AsyncMock(side_effect=ConnectionError("db down"))
+    )
+
+    body = client.get("/api/v1/dashboard/messages").json()
+
+    assert body["available"] is False
+    assert body["items"] == []
+
+
+def test_delete_message_removes_the_row(monkeypatch):
+    delete = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.dashboard.delete_message", delete)
+
+    response = client.delete("/api/v1/dashboard/messages/22222222-2222-2222-2222-222222222222")
+
+    assert response.status_code == 204
+    delete.assert_awaited_once()
+    assert delete.await_args.args[0] == "22222222-2222-2222-2222-222222222222"
+
+
+def test_delete_message_404s_when_already_gone(monkeypatch):
+    monkeypatch.setattr("app.services.dashboard.delete_message", AsyncMock(return_value=False))
+
+    response = client.delete("/api/v1/dashboard/messages/22222222-2222-2222-2222-222222222222")
+
+    assert response.status_code == 404
+
+
+def test_delete_message_rejects_a_malformed_id():
+    response = client.delete("/api/v1/dashboard/messages/not-a-uuid")
+
+    assert response.status_code == 422
 
 

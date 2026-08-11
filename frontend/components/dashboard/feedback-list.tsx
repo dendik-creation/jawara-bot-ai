@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import { api, GatewayError, type DatasetItem, type FeedbackItem, type FeedbackType } from "@/lib/api"
 
 const FEEDBACK_TYPES: FeedbackType[] = ["CONFIRM", "FALSE_POSITIVE"]
@@ -232,6 +233,7 @@ function AddToDatasetForm({
         sourceFeedbackId: target.id,
       })
       onDone()
+      toast.success("Feedback dikurasi ke dataset")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menambah sample")
     } finally {

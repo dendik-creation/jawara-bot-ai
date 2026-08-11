@@ -6,7 +6,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { toast } from "@/components/ui/toast"
 import {
   Dialog,
   DialogContent,
@@ -85,10 +86,6 @@ export function IncidentList() {
 function IncidentListSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Incidents</CardTitle>
-        <CardDescription>Unit investigasi yang mengelompokkan threat yang saling terkait.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -179,11 +176,7 @@ function IncidentListInner() {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <div>
-          <CardTitle>Incidents</CardTitle>
-          <CardDescription>Unit investigasi yang mengelompokkan threat yang saling terkait.</CardDescription>
-        </div>
+      <CardHeader className="flex-row justify-end">
         <Button size="sm" onClick={() => setCreating(true)}>
           Buat Incident
         </Button>
@@ -412,6 +405,7 @@ function CreateIncidentForm({
     try {
       const incident = await api.createIncident(title, severity, ids)
       onCreated(incident.id)
+      toast.success("Incident dibuat", { description: title.trim() })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membuat incident")
     } finally {

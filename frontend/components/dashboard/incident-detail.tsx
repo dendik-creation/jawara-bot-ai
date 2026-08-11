@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import {
   api,
   GatewayError,
@@ -83,6 +84,15 @@ export function IncidentDetail({ id }: { id: string }) {
     try {
       await api.actionOnIncident(id, action, opts)
       refresh()
+      const label =
+        action === "ASSIGN_TO_ME"
+          ? "Incident ditugaskan ke kamu"
+          : action === "SET_STATE"
+            ? `State diganti ke ${opts.state}`
+            : action === "SET_SEVERITY"
+              ? `Severity diganti ke ${opts.severity}`
+              : "Incident dieskalasi"
+      toast.success(label)
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menjalankan aksi")
     } finally {
@@ -237,6 +247,7 @@ function ThreatsCard({
       await api.addThreatToIncident(incidentId, newId.trim())
       setNewId("")
       onChanged()
+      toast.success("Threat ditambahkan ke incident")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menambahkan threat")
     } finally {
@@ -250,6 +261,7 @@ function ThreatsCard({
     try {
       await api.removeThreatFromIncident(incidentId, messageLogId)
       onChanged()
+      toast.success("Threat dihapus dari incident")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menghapus threat")
     } finally {
@@ -347,6 +359,7 @@ function NotesCard({
       await api.addIncidentNote(incidentId, note.trim())
       setNote("")
       onChanged()
+      toast.success("Catatan ditambahkan")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menambahkan catatan")
     } finally {
@@ -436,6 +449,7 @@ function CloseIncidentForm({
     try {
       await api.actionOnIncident(incidentId, "CLOSE", { state, reason: reason.trim() })
       onDone()
+      toast.success("Incident ditutup", { description: state === "RESOLVED" ? "Ditandai resolved." : "Ditandai false positive." })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menutup incident")
     } finally {

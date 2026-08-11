@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import {
   api,
   GatewayError,
@@ -135,10 +136,6 @@ export function DetectionRuleList() {
 function DetectionRuleListSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Detection Rules</CardTitle>
-        <CardDescription>Mekanisme deteksi deterministik, dikelola terpisah dari ML inference.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -233,6 +230,8 @@ function DetectionRuleListInner() {
     try {
       await api.actionOnDetectionRule(rule.id, action)
       setRefreshKey((key) => key + 1)
+      const label = action === "ACTIVATE" ? "diaktifkan" : action === "DISABLE" ? "dinonaktifkan" : "diarsipkan"
+      toast.success(`Rule ${label}`, { description: rule.name })
     } catch {
       // Row stays as-is; the refetch above on the next successful action keeps state consistent.
     } finally {
@@ -245,11 +244,7 @@ function DetectionRuleListInner() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div>
-          <CardTitle>Detection Rules</CardTitle>
-          <CardDescription>Mekanisme deteksi deterministik, dikelola terpisah dari ML inference.</CardDescription>
-        </div>
+      <CardHeader className="flex-row justify-end">
         <Button size="sm" onClick={() => setEditing("new")}>
           Buat Rule
         </Button>
@@ -600,6 +595,7 @@ function RuleForm({
         })
       }
       onDone()
+      toast.success(isNew ? "Rule dibuat" : "Rule diperbarui", { description: name.trim() })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menyimpan rule")
     } finally {

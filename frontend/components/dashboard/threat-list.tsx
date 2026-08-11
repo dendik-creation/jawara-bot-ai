@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Badge, riskVariant } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import {
   api,
   GatewayError,
@@ -105,10 +106,6 @@ export function ThreatList() {
 function ThreatListSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Threats</CardTitle>
-        <CardDescription>Pesan yang terdeteksi HIGH/MEDIUM risk, siap ditriase operator.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -207,10 +204,6 @@ function ThreatListInner() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Threats</CardTitle>
-        <CardDescription>Pesan yang terdeteksi HIGH/MEDIUM risk, siap ditriase operator.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end gap-3">
           <FilterSelect
@@ -490,6 +483,7 @@ function ThreatActionForm({
     try {
       await api.actionOnThreat(threat.message_log_id, action, notes)
       onDone()
+      toast.success("Tindakan disimpan", { description: `Threat ditandai ${action}.` })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menyimpan tindakan")
     } finally {
@@ -566,7 +560,6 @@ function LinkIncidentForm({ threat, onClose }: { threat: ThreatRecord; onClose: 
   const [title, setTitle] = React.useState("")
   const [severity, setSeverity] = React.useState<IncidentSeverity | "">("")
   const [submitting, setSubmitting] = React.useState(false)
-  const [done, setDone] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
@@ -592,10 +585,12 @@ function LinkIncidentForm({ threat, onClose }: { threat: ThreatRecord; onClose: 
       if (target === "new") {
         if (!title.trim() || !severity) return
         await api.createIncident(title, severity, [threat.message_log_id])
+        toast.success("Incident dibuat", { description: title.trim() })
       } else {
         await api.addThreatToIncident(target, threat.message_log_id)
+        toast.success("Threat ditambahkan ke incident")
       }
-      setDone(true)
+      onClose()
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menambahkan ke incident")
     } finally {
@@ -612,10 +607,7 @@ function LinkIncidentForm({ threat, onClose }: { threat: ThreatRecord; onClose: 
         <DialogDescription>Kelompokkan threat ini ke incident baru atau incident yang sudah ada.</DialogDescription>
       </DialogHeader>
 
-      {done ? (
-        <p className="text-sm text-muted-foreground">Berhasil ditambahkan.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <Label className="text-xs text-muted-foreground">Incident</Label>
             <Select value={target} onValueChange={(value) => setTarget(value ?? "new")}>
@@ -660,18 +652,15 @@ function LinkIncidentForm({ threat, onClose }: { threat: ThreatRecord; onClose: 
             </>
           ) : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        </div>
-      )}
+      </div>
 
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
-          {done ? "Tutup" : "Batal"}
+          Batal
         </Button>
-        {!done ? (
-          <Button onClick={submit} disabled={!canSubmit || submitting}>
-            {submitting ? "Menyimpan…" : "Tambahkan"}
-          </Button>
-        ) : null}
+        <Button onClick={submit} disabled={!canSubmit || submitting}>
+          {submitting ? "Menyimpan…" : "Tambahkan"}
+        </Button>
       </DialogFooter>
     </>
   )

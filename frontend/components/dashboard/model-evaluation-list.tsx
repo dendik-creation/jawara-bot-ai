@@ -4,7 +4,7 @@ import * as React from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { toast } from "@/components/ui/toast"
 import {
   api,
   GatewayError,
@@ -82,13 +83,7 @@ export function ModelEvaluationList() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div>
-          <CardTitle>Evaluation</CardTitle>
-          <CardDescription>
-            Gerbang antara model selesai dilatih dan model boleh melayani produksi — dievaluasi terhadap dataset uji tetap.
-          </CardDescription>
-        </div>
+      <CardHeader className="flex-row justify-end">
         <Button size="sm" onClick={() => setCreating(true)}>
           Buat Evaluasi
         </Button>
@@ -239,6 +234,7 @@ function CreateEvaluationForm({ onClose, onDone }: { onClose: () => void; onDone
     try {
       await api.createModelEvaluation(trainingJobId, datasetId)
       onDone()
+      toast.success("Evaluasi dibuat")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membuat evaluasi")
     } finally {
@@ -366,6 +362,7 @@ function EvaluationDetailView({
       await api.actionOnModelEvaluation(evaluationId, "CANCEL")
       setRefresh((key) => key + 1)
       onChanged()
+      toast.success("Evaluasi dibatalkan")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membatalkan evaluasi")
     } finally {

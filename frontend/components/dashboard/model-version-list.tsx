@@ -4,12 +4,13 @@ import * as React from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { toast } from "@/components/ui/toast"
 import { api, GatewayError, type ModelVersionItem, type ModelVersionStatus, type ModelVersions } from "@/lib/api"
 
 const STATUSES: ModelVersionStatus[] = ["CANDIDATE", "VALIDATED", "PRODUCTION", "ARCHIVED"]
@@ -66,12 +67,6 @@ export function ModelVersionList() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Model Registry</CardTitle>
-        <CardDescription>
-          Model version muncul otomatis begitu evaluasi selesai — hanya operator yang boleh validasi/promosikan/archive.
-        </CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {productionVersion ? (
           <div className="rounded-lg border border-border bg-muted/40 p-3">
@@ -230,6 +225,8 @@ function ModelVersionDetailView({
       await api.actionOnModelVersion(modelVersionId, action)
       setRefresh((key) => key + 1)
       onChanged()
+      const label = action === "VALIDATE" ? "divalidasi" : action === "PROMOTE" ? "dipromosikan ke production" : "diarsipkan"
+      toast.success(`Model version ${label}`)
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menjalankan aksi")
     } finally {

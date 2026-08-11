@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -78,10 +78,6 @@ export function AuditLogList() {
 function AuditLogSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Audit Log</CardTitle>
-        <CardDescription>Jejak aksi operator: siapa melakukan apa, kapan, dan hasilnya.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -183,10 +179,6 @@ function AuditLogListInner() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Audit Log</CardTitle>
-        <CardDescription>Jejak aksi operator: siapa melakukan apa, kapan, dan hasilnya.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">

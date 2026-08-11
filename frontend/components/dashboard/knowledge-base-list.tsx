@@ -23,6 +23,7 @@ import {
   PaginationItem,
 } from "@/components/ui/pagination"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { toast } from "@/components/ui/toast"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
@@ -106,10 +107,6 @@ export function KnowledgeBaseList() {
 function KnowledgeBaseListSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Knowledge Base</CardTitle>
-        <CardDescription>Fact items yang bisa ditarik ML Service saat menjawab pesan pengguna.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -209,6 +206,7 @@ function KnowledgeBaseListInner() {
     try {
       await api.syncFactItem(item.id)
       setRefreshKey((key) => key + 1)
+      toast.success("Fact item disinkron", { description: item.title })
     } catch {
       // Row stays as-is; the next successful action's refetch keeps state consistent.
     } finally {
@@ -221,6 +219,7 @@ function KnowledgeBaseListInner() {
     try {
       await api.syncAllFactItems()
       setRefreshKey((key) => key + 1)
+      toast.success("Semua fact item disinkron")
     } catch {
       // Ditto.
     } finally {
@@ -233,6 +232,7 @@ function KnowledgeBaseListInner() {
     try {
       await api.actionOnFactItem(item.id, item.is_active ? "DEACTIVATE" : "ACTIVATE")
       setRefreshKey((key) => key + 1)
+      toast.success(item.is_active ? "Fact item dinonaktifkan" : "Fact item diaktifkan", { description: item.title })
     } catch {
       // Ditto.
     } finally {
@@ -246,22 +246,16 @@ function KnowledgeBaseListInner() {
   return (
     <div className="flex flex-col gap-6">
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
-          <div>
-            <CardTitle>Knowledge Base</CardTitle>
-            <CardDescription>Fact items yang bisa ditarik ML Service saat menjawab pesan pengguna.</CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
-              Import CSV
-            </Button>
-            <Button variant="outline" size="sm" disabled={syncingAll} onClick={syncAll}>
-              {syncingAll ? "Menyinkron…" : "Sync All"}
-            </Button>
-            <Button size="sm" onClick={() => setEditing("new")}>
-              Buat Fact
-            </Button>
-          </div>
+        <CardHeader className="flex-row justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
+            Import CSV
+          </Button>
+          <Button variant="outline" size="sm" disabled={syncingAll} onClick={syncAll}>
+            {syncingAll ? "Menyinkron…" : "Sync All"}
+          </Button>
+          <Button size="sm" onClick={() => setEditing("new")}>
+            Buat Fact
+          </Button>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-wrap items-end gap-3">
@@ -582,6 +576,7 @@ function FactForm({
         })
       }
       onDone()
+      toast.success(isNew ? "Fact item dibuat" : "Fact item diperbarui", { description: title.trim() })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menyimpan fact item")
     } finally {
@@ -733,6 +728,7 @@ function ImportCsvForm({ onClose, onImported }: { onClose: () => void; onImporte
       const outcome = await api.importFactItemsCsv(file)
       setResult(outcome)
       onImported()
+      toast.success("CSV diimpor", { description: `${outcome.created} dari ${outcome.total} baris dibuat.` })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal mengimpor CSV")
     } finally {
@@ -846,6 +842,7 @@ function SourcesPanel() {
     setError(null)
     try {
       await api.createFactSource(name.trim(), baseUrl.trim(), true)
+      toast.success("Sumber ditambahkan", { description: name.trim() })
       setName("")
       setBaseUrl("")
       setRefreshKey((key) => key + 1)

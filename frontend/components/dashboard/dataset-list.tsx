@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import {
   api,
   GatewayError,
@@ -202,6 +203,7 @@ function CreateDatasetForm({ onClose, onDone }: { onClose: () => void; onDone: (
     try {
       await api.createDataset(name.trim(), Number(version) || 1, source, description.trim() || undefined)
       onDone()
+      toast.success("Dataset dibuat", { description: name.trim() })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membuat dataset")
     } finally {
@@ -330,6 +332,7 @@ function DatasetDetailView({
     try {
       await api.actionOnDataset(datasetId, action)
       refetch()
+      toast.success(action === "VALIDATE" ? "Dataset divalidasi" : "Dataset diarsipkan")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "aksi gagal")
     } finally {
@@ -345,6 +348,7 @@ function DatasetDetailView({
       setNewText("")
       setNewLabel("")
       refetch()
+      toast.success("Sample ditambahkan")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menambah sample")
     } finally {
@@ -357,6 +361,7 @@ function DatasetDetailView({
     try {
       await api.removeDatasetSample(datasetId, sampleId)
       refetch()
+      toast.success("Sample dihapus")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menghapus sample")
     } finally {

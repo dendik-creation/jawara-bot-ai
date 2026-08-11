@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/components/ui/toast"
 import { api, GatewayError, type UserDetail as UserDetailData, type UserTier } from "@/lib/api"
 
 function tierVariant(tier: UserTier): "high" | "medium" | "unknown" {
@@ -236,6 +237,7 @@ function UserActionForm({
     try {
       await api.actionOnUser(userHash, blocked ? "UNBLOCK" : "BLOCK", reason.trim())
       onDone()
+      toast.success(blocked ? "Blokir pengguna dibuka" : "Pengguna diblokir")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menyimpan")
     } finally {

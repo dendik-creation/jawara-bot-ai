@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge, riskVariant } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
+import { toast } from "@/components/ui/toast"
 import {
   Pagination,
   PaginationContent,
@@ -77,12 +78,6 @@ export function MessageInspection() {
 function MessageInspectionSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Message Inspection</CardTitle>
-        <CardDescription>
-          Isi pesan asli pengguna. Disimpan tanpa batas waktu — hapus manual per baris kalau perlu.
-        </CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -161,6 +156,7 @@ function MessageInspectionInner() {
           : current,
       )
       setPendingDelete(null)
+      toast.success("Pesan dihapus")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal menghapus")
     } finally {
@@ -173,12 +169,6 @@ function MessageInspectionInner() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Message Inspection</CardTitle>
-        <CardDescription>
-          Isi pesan asli pengguna. Disimpan tanpa batas waktu — hapus manual per baris kalau perlu.
-        </CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {error ? (
           <p className="text-sm text-muted-foreground">{error}</p>

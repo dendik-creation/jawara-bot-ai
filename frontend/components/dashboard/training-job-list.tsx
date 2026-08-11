@@ -4,7 +4,7 @@ import * as React from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { toast } from "@/components/ui/toast"
 import { api, GatewayError, type DatasetItem, type TrainingJobItem, type TrainingJobStatus, type TrainingJobs } from "@/lib/api"
 
 const STATUSES: TrainingJobStatus[] = ["QUEUED", "RUNNING", "EVALUATING", "COMPLETED", "FAILED", "CANCELLED"]
@@ -75,13 +76,7 @@ export function TrainingJobList() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div>
-          <CardTitle>Training Jobs</CardTitle>
-          <CardDescription>
-            Operasi asinkron terkontrol — job hanya dibuat di sini, eksekusi berjalan di worker terpisah.
-          </CardDescription>
-        </div>
+      <CardHeader className="flex-row justify-end">
         <Button size="sm" onClick={() => setCreating(true)}>
           Buat Job
         </Button>
@@ -217,6 +212,7 @@ function CreateJobForm({ onClose, onDone }: { onClose: () => void; onDone: () =>
         validationSplit: validationSplit ? Number(validationSplit) : undefined,
       })
       onDone()
+      toast.success("Training job dibuat", { description: baseModel.trim() })
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membuat training job")
     } finally {
@@ -342,6 +338,7 @@ function JobDetailView({ jobId, onClose, onChanged }: { jobId: string; onClose: 
       await api.actionOnTrainingJob(jobId, "CANCEL")
       setRefresh((key) => key + 1)
       onChanged()
+      toast.success("Training job dibatalkan")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal membatalkan job")
     } finally {

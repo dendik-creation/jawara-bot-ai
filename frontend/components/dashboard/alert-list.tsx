@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/components/auth/auth-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { toast } from "@/components/ui/toast"
 import {
   Pagination,
   PaginationContent,
@@ -85,10 +86,6 @@ export function AlertList() {
 function AlertListSkeleton() {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Alerts</CardTitle>
-        <CardDescription>Notifikasi yang butuh perhatian operator.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-10 w-full" />
@@ -184,6 +181,7 @@ function AlertListInner() {
     try {
       await api.actionOnAlert(alert.id, action)
       setRefreshKey((key) => key + 1)
+      toast.success(action === "ACKNOWLEDGE" ? "Alert diketahui" : "Alert ditugaskan ke kamu")
     } catch {
       // Surfaced via the row staying unchanged; the list refetch below on
       // failure keeps state consistent without a separate error banner here.
@@ -197,10 +195,6 @@ function AlertListInner() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Alerts</CardTitle>
-        <CardDescription>Notifikasi yang butuh perhatian operator.</CardDescription>
-      </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
@@ -463,6 +457,7 @@ function ResolveAlertForm({
     try {
       await api.actionOnAlert(alert.id, "RESOLVE", reason)
       onDone()
+      toast.success("Alert diresolve")
     } catch (caught) {
       setError(caught instanceof GatewayError ? caught.message : "gagal resolve alert")
     } finally {

@@ -4,6 +4,7 @@ import { Geist_Mono, IBM_Plex_Sans } from "next/font/google"
 import "./globals.css"
 import { AuthProvider } from "@/components/auth/auth-provider"
 import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "@/components/ui/toast"
 import { cn } from "@/lib/utils"
 
 const ibmPlexSans = IBM_Plex_Sans({ subsets: ["latin"], variable: "--font-sans" })
@@ -36,7 +37,9 @@ export default function RootLayout({
     >
       <body>
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <Toaster>
+            <AuthProvider>{children}</AuthProvider>
+          </Toaster>
         </ThemeProvider>
       </body>
     </html>

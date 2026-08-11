@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import * as React from "react"
 
+import { toast } from "@/components/ui/toast"
 import { api, UnauthorizedError, type Operator } from "@/lib/api"
 import { clearToken, getToken, setToken, subscribe } from "@/lib/session"
 
@@ -12,6 +13,8 @@ type AuthState = {
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
+  /** Applies a fresh operator record (e.g. after a profile edit) without a full reload. */
+  updateOperator: (operator: Operator) => void
 }
 
 const AuthContext = React.createContext<AuthState | null>(null)
@@ -84,11 +87,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearToken()
     setOperator(null)
     router.replace("/login")
+    toast.success("Berhasil keluar", { description: "Sesi kamu sudah diakhiri." })
   }, [router])
 
+  const updateOperator = React.useCallback((next: Operator) => {
+    setOperator(next)
+  }, [])
+
   const value = React.useMemo(
-    () => ({ operator, loading, signIn, signOut }),
-    [operator, loading, signIn, signOut],
+    () => ({ operator, loading, signIn, signOut, updateOperator }),
+    [operator, loading, signIn, signOut, updateOperator],
   )
 
   return <AuthContext value={value}>{children}</AuthContext>

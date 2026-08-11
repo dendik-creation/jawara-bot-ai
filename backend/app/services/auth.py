@@ -128,6 +128,24 @@ async def set_password(email: str, password: str, settings: Settings | None = No
     return result.endswith(" 1")
 
 
+async def set_full_name(operator_id: str, full_name: str, settings: Settings | None = None) -> Operator | None:
+    """Update one account's display name. Returns None if no such account."""
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        row = await conn.fetchrow(
+            """
+            UPDATE operators SET full_name = $2 WHERE id = $1
+            RETURNING id, email, full_name, is_active, last_login_at
+            """,
+            operator_id,
+            full_name.strip(),
+        )
+    finally:
+        await conn.close()
+    return _operator_from_row(row) if row else None
+
+
 async def authenticate(email: str, password: str, settings: Settings | None = None) -> Operator | None:
     """Verify credentials. Returns None for wrong password, unknown or disabled account.
 

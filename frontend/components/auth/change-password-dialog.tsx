@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { toast } from "@/components/ui/toast"
 import { api, GatewayError } from "@/lib/api"
 
 /**
@@ -61,6 +62,7 @@ export function ChangePasswordDialog({
     try {
       await api.changePassword(currentPassword, newPassword)
       handleOpenChange(false)
+      toast.success("Kata sandi diganti", { description: "Gunakan kata sandi baru untuk sesi masuk berikutnya." })
     } catch (caught) {
       setError(
         caught instanceof GatewayError

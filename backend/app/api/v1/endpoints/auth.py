@@ -18,7 +18,13 @@ from app.core.config import get_settings
 from app.core.rate_limit import LOGIN_KEY_PREFIX, check_rate_limit
 from app.core.redis_client import get_redis
 from app.core.security import bearer_token, require_operator
-from app.schemas.auth import ChangePasswordRequest, LoginRequest, LoginResponse, OperatorOut
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    LoginRequest,
+    LoginResponse,
+    OperatorOut,
+    UpdateProfileRequest,
+)
 from app.services import auth
 from app.services.audit import record_audit
 from app.services.auth import AuthUnavailableError, Operator
@@ -214,3 +220,29 @@ async def change_password(
 async def me(operator: Operator = Depends(require_operator)) -> OperatorOut:
     """Who the current token belongs to — the frontend's session check on load."""
     return OperatorOut(**operator.as_dict())
+
+
+@router.patch("/auth/me", response_model=OperatorOut)
+async def update_me(
+    payload: UpdateProfileRequest,
+    request: Request,
+    operator: Operator = Depends(require_operator),
+) -> OperatorOut:
+    """Self-service display-name change. Avatar upload is not implemented yet."""
+    settings = get_settings()
+    updated = await auth.set_full_name(operator.id, payload.full_name, settings)
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operator not found")
+
+    logger.info("profile updated", extra={"operator_id": operator.id})
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="operator.update_profile",
+        target_type="operator",
+        target_id=operator.id,
+        result="SUCCESS",
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        settings=settings,
+    )
+    return OperatorOut(**updated.as_dict())

@@ -18,6 +18,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=200)
+
+
 class OperatorOut(BaseModel):
     id: str
     email: str

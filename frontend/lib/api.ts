@@ -883,6 +883,11 @@ export const api = {
       method: "POST",
       body: { current_password: currentPassword, new_password: newPassword },
     }),
+  updateProfile: (fullName: string) =>
+    request<Operator>("/api/v1/auth/me", {
+      method: "PATCH",
+      body: { full_name: fullName },
+    }),
 
   summary: (signal?: AbortSignal) => get<DashboardSummary>("/api/v1/dashboard/summary", signal),
   activity: (limit = 15, signal?: AbortSignal) =>

@@ -68,6 +68,8 @@ class MlClient:
             "embed": self._settings.ml_timeout_embed_seconds,
             "rag-query": self._settings.ml_timeout_rag_seconds,
             "generate": self._settings.ml_timeout_generate_seconds,
+            "train": self._settings.ml_timeout_train_seconds,
+            "evaluate": self._settings.ml_timeout_evaluate_seconds,
         }.get(endpoint, self._settings.ml_timeout_classify_seconds)
 
     async def _post(
@@ -179,6 +181,42 @@ class MlClient:
         Qdrant write belong to the ML Service (04_ML_Service.md §5).
         """
         return await self._post("kb/upsert", request_id, {"items": items})
+
+    async def train(
+        self,
+        request_id: str,
+        dataset_ref: dict[str, Any],
+        base_model: str,
+        config: dict[str, Any],
+    ) -> MlResponse:
+        """Kick off a training run (05_Training_Jobs.md).
+
+        `/v1/train` doesn't exist in ml-service yet — this call is expected
+        to raise `MlServiceError` today, and the caller (a Celery task) is
+        expected to record that as a real, honest job failure rather than
+        pretend training happened. Not idempotent — training must never be
+        retried blindly (same reasoning as `generate`).
+        """
+        return await self._post(
+            "train", request_id, {"dataset": dataset_ref, "base_model": base_model, "config": config}
+        )
+
+    async def evaluate(
+        self,
+        request_id: str,
+        model_version: str,
+        dataset_ref: dict[str, Any],
+    ) -> MlResponse:
+        """Score a trained model against a fixed eval dataset (06_Model_Evaluation.md).
+
+        `/v1/evaluate` doesn't exist in ml-service yet — this call is expected
+        to raise `MlServiceError` today, and the caller (a Celery task) is
+        expected to record that as a real, honest evaluation failure rather
+        than fabricate metrics. Not idempotent — same reasoning as `train`.
+        """
+        return await self._post(
+            "evaluate", request_id, {"model_version": model_version, "dataset": dataset_ref}
+        )
 
     async def ready(self) -> tuple[bool, dict[str, Any]]:
         """Readiness (models loaded), not liveness. Never raises."""

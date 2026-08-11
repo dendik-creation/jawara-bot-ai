@@ -20,6 +20,7 @@ from app.core.redis_client import get_redis
 from app.core.security import bearer_token, require_operator
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, LoginResponse, OperatorOut
 from app.services import auth
+from app.services.audit import record_audit
 from app.services.auth import AuthUnavailableError, Operator
 
 logger = logging.getLogger("app.api.auth")
@@ -50,6 +51,16 @@ async def login(payload: LoginRequest, request: Request) -> LoginResponse:
         # password and a right one cost the same number of attempts. bcrypt
         # alone already makes online brute force slow; this makes it pointless.
         logger.warning("login rate limited", extra={"scope": scope, "count": verdict.current})
+        await record_audit(
+            actor_operator_id=None,
+            action="operator.login",
+            target_type="operator",
+            result="DENIED",
+            metadata={"email": email, "reason": "rate_limited"},
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            settings=settings,
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts",
@@ -60,6 +71,16 @@ async def login(payload: LoginRequest, request: Request) -> LoginResponse:
         operator = await auth.authenticate(email, payload.password, settings)
     except AuthUnavailableError:
         logger.error("login failed: account store unreachable", exc_info=True)
+        await record_audit(
+            actor_operator_id=None,
+            action="operator.login",
+            target_type="operator",
+            result="FAILED",
+            metadata={"email": email, "reason": "auth_backend_unavailable"},
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            settings=settings,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication backend unavailable",
@@ -69,6 +90,16 @@ async def login(payload: LoginRequest, request: Request) -> LoginResponse:
         # One message for wrong password, unknown address, and disabled account.
         # Anything more specific is an account-enumeration oracle.
         logger.info("login rejected", extra={"email": email})
+        await record_audit(
+            actor_operator_id=None,
+            action="operator.login",
+            target_type="operator",
+            result="FAILED",
+            metadata={"email": email, "reason": "invalid_credentials"},
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            settings=settings,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -81,6 +112,16 @@ async def login(payload: LoginRequest, request: Request) -> LoginResponse:
         ip_address=_client_ip(request),
     )
     logger.info("login accepted", extra={"operator_id": operator.id})
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="operator.login",
+        target_type="operator",
+        target_id=operator.id,
+        result="SUCCESS",
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        settings=settings,
+    )
 
     return LoginResponse(
         access_token=token,
@@ -91,7 +132,8 @@ async def login(payload: LoginRequest, request: Request) -> LoginResponse:
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
-    _: Operator = Depends(require_operator),
+    request: Request,
+    operator: Operator = Depends(require_operator),
     authorization: str | None = Header(default=None),
 ) -> None:
     """Revoke the presented session.
@@ -100,14 +142,26 @@ async def logout(
     revoked, so a token copied out of the browser before logout stops working
     too.
     """
+    settings = get_settings()
     token = bearer_token(authorization)
     if token:
-        await auth.revoke_session(token, get_settings())
+        await auth.revoke_session(token, settings)
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="operator.logout",
+        target_type="operator",
+        target_id=operator.id,
+        result="SUCCESS",
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        settings=settings,
+    )
 
 
 @router.post("/auth/change-password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
     payload: ChangePasswordRequest,
+    request: Request,
     operator: Operator = Depends(require_operator),
 ) -> None:
     """Self-service password change.
@@ -117,10 +171,23 @@ async def change_password(
     its own to permanently take over the account.
     """
     settings = get_settings()
+    audit_context = {
+        "actor_operator_id": operator.id,
+        "action": "operator.change_password",
+        "target_type": "operator",
+        "target_id": operator.id,
+        "ip_address": _client_ip(request),
+        "user_agent": request.headers.get("user-agent"),
+        "settings": settings,
+    }
+
     try:
         verified = await auth.authenticate(operator.email, payload.current_password, settings)
     except AuthUnavailableError:
         logger.error("change-password failed: account store unreachable", exc_info=True)
+        await record_audit(
+            **audit_context, result="FAILED", metadata={"reason": "auth_backend_unavailable"}
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication backend unavailable",
@@ -130,6 +197,9 @@ async def change_password(
         # 400, not 401: the session itself is fine (`require_operator` already
         # passed). A 401 here would make the frontend's blanket "session
         # expired, log out" handling fire on a simple typo in the old password.
+        await record_audit(
+            **audit_context, result="FAILED", metadata={"reason": "current_password_incorrect"}
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
@@ -137,6 +207,7 @@ async def change_password(
 
     await auth.set_password(operator.email, payload.new_password, settings)
     logger.info("password changed", extra={"operator_id": operator.id})
+    await record_audit(**audit_context, result="SUCCESS")
 
 
 @router.get("/auth/me", response_model=OperatorOut)

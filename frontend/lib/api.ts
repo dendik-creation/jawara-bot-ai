@@ -78,10 +78,28 @@ export type ThreatItem = {
   risk: RiskLevel
 }
 
+export type RecentAlertItem = {
+  id: string
+  at: string
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  title: string
+  source: string
+  state: "NEW" | "ACKNOWLEDGED" | "RESOLVED" | "ESCALATED"
+}
+
+export type RecentIncidentItem = {
+  id: string
+  code: string
+  at: string
+  title: string
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  state: "OPEN" | "INVESTIGATING" | "CONTAINED" | "RESOLVED" | "FALSE_POSITIVE"
+}
+
 export type RecentPanels = {
   threats: RecentBlock<ThreatItem>
-  incidents: RecentBlock<never>
-  alerts: RecentBlock<never>
+  incidents: RecentBlock<RecentIncidentItem>
+  alerts: RecentBlock<RecentAlertItem>
 }
 
 export type ServiceStatus = "HEALTHY" | "DOWN"
@@ -119,6 +137,584 @@ export type WhatsAppSessions = {
   sessions: { name: string; status: string; engine: string | null }[]
 }
 
+export type AuditResult = "SUCCESS" | "FAILED" | "DENIED"
+
+export type AuditLogItem = {
+  id: string
+  at: string
+  actor_operator_id: string | null
+  actor_name: string | null
+  action: string
+  target_type: string
+  target_id: string | null
+  result: AuditResult
+  metadata: Record<string, unknown>
+  ip_address: string | null
+}
+
+export type AuditLog = {
+  available: boolean
+  reason?: string
+  total: number
+  items: AuditLogItem[]
+}
+
+export type AuditLogParams = {
+  limit?: number
+  offset?: number
+  action?: string
+  actorOperatorId?: string
+  targetType?: string
+  dateFrom?: string
+  dateTo?: string
+}
+
+export type ThreatCategory =
+  | "PHISHING"
+  | "SCAM"
+  | "SOCIAL_ENGINEERING"
+  | "MALICIOUS_LINK"
+  | "IMPERSONATION"
+  | "SPAM"
+  | "OTHER"
+
+export type ThreatState = "DETECTED" | "ANALYZED" | "ACTIONED" | "RESOLVED"
+
+export type ThreatActionValue = "ALLOW" | "WARN" | "BLOCK" | "ESCALATE" | "CONFIRM" | "FALSE_POSITIVE"
+
+/** The full Threats-screen record — distinct from `ThreatItem` (RecentPanels' compact summary shape). */
+export type ThreatRecord = {
+  message_log_id: string
+  at: string
+  session: string
+  chat_type: string
+  user_hash: string
+  intent: string | null
+  threat_category: ThreatCategory
+  risk: "HIGH" | "MEDIUM"
+  similarity_score: number | null
+  state: ThreatState
+  action: ThreatActionValue | null
+  action_by: string | null
+  action_at: string | null
+  notes: string | null
+}
+
+export type Threats = {
+  available: boolean
+  reason?: string
+  total: number
+  items: ThreatRecord[]
+}
+
+export type ThreatsParams = {
+  limit?: number
+  offset?: number
+  severity?: "HIGH" | "MEDIUM"
+  category?: ThreatCategory
+  state?: ThreatState
+  action?: ThreatActionValue
+  userHash?: string
+  dateFrom?: string
+  dateTo?: string
+}
+
+export type AlertSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+export type AlertState = "NEW" | "ACKNOWLEDGED" | "RESOLVED" | "ESCALATED"
+export type AlertActionValue = "ACKNOWLEDGE" | "RESOLVE" | "ASSIGN_TO_ME"
+
+export type AlertItem = {
+  id: string
+  severity: AlertSeverity
+  title: string
+  source: string
+  source_threat_id: string | null
+  state: AlertState
+  assigned_operator_id: string | null
+  assigned_operator_name: string | null
+  resolution_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type Alerts = {
+  available: boolean
+  reason?: string
+  total: number
+  items: AlertItem[]
+}
+
+export type AlertsParams = {
+  limit?: number
+  offset?: number
+  severity?: AlertSeverity
+  state?: AlertState
+  source?: string
+  dateFrom?: string
+  dateTo?: string
+}
+
+export type IncidentSeverity = AlertSeverity
+export type IncidentState = "OPEN" | "INVESTIGATING" | "CONTAINED" | "RESOLVED" | "FALSE_POSITIVE"
+export type IncidentActionValue = "ASSIGN_TO_ME" | "SET_STATE" | "SET_SEVERITY" | "CLOSE" | "ESCALATE"
+
+export type IncidentSummary = {
+  id: string
+  code: string
+  title: string
+  severity: IncidentSeverity
+  state: IncidentState
+  assigned_operator_id: string | null
+  assigned_operator_name: string | null
+  resolution_reason: string | null
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  affected_user_count: number
+}
+
+export type IncidentNote = {
+  id: string
+  note: string
+  at: string
+  author_operator_id: string
+  author_name: string
+}
+
+export type IncidentDetail = IncidentSummary & {
+  threats: ThreatRecord[]
+  categories: string[]
+  notes: IncidentNote[]
+}
+
+export type Incidents = {
+  available: boolean
+  reason?: string
+  total: number
+  items: IncidentSummary[]
+}
+
+export type IncidentsParams = {
+  limit?: number
+  offset?: number
+  severity?: IncidentSeverity
+  state?: IncidentState
+  dateFrom?: string
+  dateTo?: string
+}
+
+export type UserTier = "HIGH" | "MEDIUM" | "NONE"
+export type UserChatType = "PERSONAL" | "GROUP"
+export type UserActionValue = "BLOCK" | "UNBLOCK"
+
+export type UserSummary = {
+  user_hash: string
+  chat_type: UserChatType
+  is_active: boolean
+  subscribed_at: string
+  threat_count: number
+  tier: UserTier
+  score: number
+  last_seen: string | null
+  blocked: boolean
+  block_reason: string | null
+  blocked_by: string | null
+  blocked_by_name: string | null
+  blocked_at: string | null
+}
+
+export type UserDetail = UserSummary & {
+  dominant_category: string | null
+  recent_threats: ThreatRecord[]
+}
+
+export type Users = {
+  available: boolean
+  reason?: string
+  total: number
+  items: UserSummary[]
+}
+
+export type UsersParams = {
+  limit?: number
+  offset?: number
+  tier?: UserTier
+  chatType?: UserChatType
+  isActive?: boolean
+  blocked?: boolean
+}
+
+export type DetectionRuleType =
+  | "KEYWORD"
+  | "DOMAIN"
+  | "URL"
+  | "RISK_THRESHOLD"
+  | "PATTERN"
+  | "REPEATED_OFFENDER"
+  | "RATE_LIMIT"
+  | "ALLOWLIST"
+  | "BLOCKLIST"
+export type DetectionRuleSeverity = "HIGH" | "MEDIUM" | "LOW"
+export type DetectionRuleStatus = "DRAFT" | "ACTIVE" | "DISABLED" | "ARCHIVED"
+export type DetectionRuleActionValue = "UPDATE" | "ACTIVATE" | "DISABLE" | "ARCHIVE"
+
+export type DetectionRuleItem = {
+  id: string
+  name: string
+  rule_type: DetectionRuleType
+  condition: Record<string, unknown>
+  severity: DetectionRuleSeverity
+  status: DetectionRuleStatus
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+}
+
+export type DetectionRules = {
+  available: boolean
+  reason?: string
+  total: number
+  items: DetectionRuleItem[]
+}
+
+export type DetectionRulesParams = {
+  limit?: number
+  offset?: number
+  ruleType?: DetectionRuleType
+  status?: DetectionRuleStatus
+  severity?: DetectionRuleSeverity
+}
+
+export type PolicyScope = "DEFAULT" | "CATEGORY_THRESHOLD" | "USER_SPECIFIC"
+export type PolicyAction = "ALLOW" | "WARN" | "BLOCK" | "ALERT" | "ESCALATE"
+export type PolicyStatus = "DRAFT" | "ACTIVE" | "DISABLED" | "ARCHIVED"
+// PATCH body's lifecycle-verb field — named `operation`, not `action`, since a
+// policy's own domain field is already called `action` (see PolicyItem below).
+export type PolicyOperationValue = "UPDATE" | "ACTIVATE" | "DISABLE" | "ARCHIVE"
+
+export type PolicyItem = {
+  id: string
+  name: string
+  scope: PolicyScope
+  condition: Record<string, unknown>
+  action: PolicyAction
+  priority: number
+  status: PolicyStatus
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+}
+
+export type Policies = {
+  available: boolean
+  reason?: string
+  total: number
+  items: PolicyItem[]
+}
+
+export type PoliciesParams = {
+  limit?: number
+  offset?: number
+  scope?: PolicyScope
+  status?: PolicyStatus
+  action?: PolicyAction
+}
+
+export type FactCategory = "HEALTH_HOAX" | "FINANCIAL_FRAUD" | "GENERAL_NEWS" | "PHISHING_LINK" | "FILE_APK"
+export type Verdict = "HOAX" | "FACT" | "MISLEADING" | "UNVERIFIED"
+export type FactItemActionValue = "UPDATE" | "ACTIVATE" | "DEACTIVATE"
+
+export type FactItem = {
+  id: string
+  source_id: number
+  source_name: string | null
+  category: FactCategory
+  title: string
+  claim_summary: string
+  fact_explanation: string
+  verdict: Verdict
+  source_url: string
+  is_active: boolean
+  synced_at: string | null
+  sync_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type FactItems = {
+  available: boolean
+  reason?: string
+  total: number
+  items: FactItem[]
+}
+
+export type FactItemsParams = {
+  limit?: number
+  offset?: number
+  category?: FactCategory
+  verdict?: Verdict
+  isActive?: boolean
+  sourceId?: number
+  search?: string
+}
+
+export type SyncResult = {
+  total: number
+  upserted: number
+  failed: number
+  rejected: { fact_item_id: string; missing?: string[] }[]
+}
+
+export type FactSource = {
+  id: number
+  name: string
+  base_url: string
+  is_trusted: boolean
+  created_at: string | null
+}
+
+export type FactSources = {
+  available: boolean
+  reason?: string
+  items: FactSource[]
+}
+
+export type ImportCsvResult = {
+  total: number
+  created: number
+  failed: number
+  errors: { row: number; reason: string }[]
+}
+
+export type UnavailableBlock = { available: false; reason: string }
+
+export type FeedbackType = "CONFIRM" | "FALSE_POSITIVE"
+
+export type FeedbackItem = {
+  id: string
+  message_log_id: string
+  original_classification: FactCategory | null
+  feedback_type: FeedbackType
+  model_version: string | null
+  reason: string | null
+  actor_operator_id: string
+  actor_name: string
+  created_at: string
+  extracted_text: string | null
+  current_intent: FactCategory | null
+  risk_score: string
+  used_in_dataset_id: string | null
+  used_in_dataset_name: string | null
+}
+
+export type Feedback = {
+  available: boolean
+  reason?: string
+  total: number
+  items: FeedbackItem[]
+}
+
+export type FeedbackParams = {
+  limit?: number
+  offset?: number
+  feedbackType?: FeedbackType
+}
+
+export type DatasetSource = "CURATED" | "OPERATOR_FEEDBACK" | "IMPORTED" | "APPROVED_INTERNAL"
+export type DatasetStatus = "DRAFT" | "VALIDATING" | "VALIDATED" | "REJECTED" | "ARCHIVED"
+export type DatasetActionValue = "UPDATE" | "VALIDATE" | "ARCHIVE"
+
+export type DatasetItem = {
+  id: string
+  name: string
+  version: number
+  source: DatasetSource
+  status: DatasetStatus
+  description: string | null
+  validation_notes: string | null
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+  sample_count: number
+}
+
+export type DatasetSample = {
+  id: string
+  dataset_id: string
+  text: string
+  label: string
+  source_message_log_id: string | null
+  source_feedback_id: string | null
+  added_by: string
+  added_at: string
+}
+
+export type DatasetDetail = DatasetItem & {
+  samples: DatasetSample[]
+  label_counts: Record<string, number>
+}
+
+export type Datasets = {
+  available: boolean
+  reason?: string
+  total: number
+  items: DatasetItem[]
+}
+
+export type DatasetsParams = {
+  limit?: number
+  offset?: number
+  status?: DatasetStatus
+}
+
+export type TrainingJobStatus = "QUEUED" | "RUNNING" | "EVALUATING" | "COMPLETED" | "FAILED" | "CANCELLED"
+export type TrainingJobActionValue = "CANCEL"
+
+export type TrainingJobItem = {
+  id: string
+  dataset_id: string
+  dataset_name: string
+  dataset_version: number
+  base_model: string
+  epochs: number | null
+  learning_rate: number | null
+  batch_size: number | null
+  validation_split: number | null
+  extra_config: Record<string, unknown> | null
+  status: TrainingJobStatus
+  progress: number | null
+  metrics: Record<string, unknown> | null
+  error_message: string | null
+  generated_model_version: string | null
+  celery_task_id: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+}
+
+export type TrainingJobs = {
+  available: boolean
+  reason?: string
+  total: number
+  items: TrainingJobItem[]
+}
+
+export type TrainingJobsParams = {
+  limit?: number
+  offset?: number
+  status?: TrainingJobStatus
+}
+
+export type ModelEvaluationStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED"
+export type ModelEvaluationActionValue = "CANCEL"
+
+export type ModelEvaluationItem = {
+  id: string
+  training_job_id: string
+  training_job_base_model: string
+  generated_model_version: string | null
+  dataset_id: string
+  dataset_name: string
+  dataset_version: number
+  status: ModelEvaluationStatus
+  progress: number | null
+  metrics: Record<string, unknown> | null
+  error_message: string | null
+  celery_task_id: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string
+}
+
+export type ModelEvaluations = {
+  available: boolean
+  reason?: string
+  total: number
+  items: ModelEvaluationItem[]
+}
+
+export type ModelEvaluationsParams = {
+  limit?: number
+  offset?: number
+  status?: ModelEvaluationStatus
+}
+
+export type ModelVersionStatus = "CANDIDATE" | "VALIDATED" | "PRODUCTION" | "ARCHIVED"
+export type ModelVersionActionValue = "VALIDATE" | "PROMOTE" | "ARCHIVE"
+
+export type ModelVersionItem = {
+  id: string
+  training_job_id: string
+  training_job_base_model: string
+  generated_model_version: string | null
+  training_dataset_name: string
+  training_dataset_version: number
+  model_evaluation_id: string
+  evaluation_metrics: Record<string, unknown> | null
+  evaluation_dataset_name: string
+  evaluation_dataset_version: number
+  status: ModelVersionStatus
+  created_at: string
+  updated_at: string
+}
+
+export type ModelVersions = {
+  available: boolean
+  reason?: string
+  total: number
+  items: ModelVersionItem[]
+}
+
+export type ModelVersionsParams = {
+  limit?: number
+  offset?: number
+  status?: ModelVersionStatus
+}
+
+export type AiMlOverview = {
+  knowledge_base:
+    | (UnavailableBlock)
+    | {
+        available: true
+        total_facts: number
+        active_facts: number
+        synced: number
+        never_synced: number
+        sync_failed: number
+        total_sources: number
+      }
+  detection_rules: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+  policies: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+  datasets: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+  feedback: UnavailableBlock | { available: true; total: number; by_type: Record<string, number> }
+  ml_service:
+    | UnavailableBlock
+    | {
+        available: true
+        status: string
+        embedder: string | null
+        llm: string | null
+        degraded_reasons: string[]
+        vector_store:
+          | UnavailableBlock
+          | { available: true; collection: string; points_count: number; vector_size: number; distance: string }
+      }
+  training_jobs: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+  model_registry: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+  evaluation: UnavailableBlock | { available: true; total: number; by_status: Record<string, number> }
+}
+
 /** Thrown when the gateway is unreachable or answers with an error status. */
 export class GatewayError extends Error {
   constructor(
@@ -141,14 +737,17 @@ export class UnauthorizedError extends GatewayError {
 async function request<T>(
   path: string,
   { method = "GET", body, signal, auth = true }: {
-    method?: "GET" | "POST" | "DELETE"
+    method?: "GET" | "POST" | "PATCH" | "DELETE"
     body?: unknown
     signal?: AbortSignal
     auth?: boolean
   } = {},
 ): Promise<T> {
+  const isFormData = body instanceof FormData
   const headers: Record<string, string> = {}
-  if (body !== undefined) headers["Content-Type"] = "application/json"
+  // FormData: the browser sets its own multipart boundary — an explicit
+  // Content-Type here would strip it and break the upload.
+  if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json"
 
   if (auth) {
     const token = getToken()
@@ -161,7 +760,7 @@ async function request<T>(
     response = await fetch(`${API_URL}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
       signal,
       // Always live data: a cached security dashboard is a lying one.
       cache: "no-store",
@@ -297,4 +896,333 @@ export const api = {
   deleteMessage: (id: string) =>
     request<void>(`/api/v1/dashboard/messages/${id}`, { method: "DELETE" }),
   streamActivity,
+
+  auditLog: (params: AuditLogParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.action) query.set("action", params.action)
+    if (params.actorOperatorId) query.set("actor_operator_id", params.actorOperatorId)
+    if (params.targetType) query.set("target_type", params.targetType)
+    if (params.dateFrom) query.set("date_from", params.dateFrom)
+    if (params.dateTo) query.set("date_to", params.dateTo)
+    return get<AuditLog>(`/api/v1/audit-log?${query.toString()}`, signal)
+  },
+
+  threats: (params: ThreatsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.severity) query.set("severity", params.severity)
+    if (params.category) query.set("category", params.category)
+    if (params.state) query.set("state", params.state)
+    if (params.action) query.set("action", params.action)
+    if (params.userHash) query.set("user_hash", params.userHash)
+    if (params.dateFrom) query.set("date_from", params.dateFrom)
+    if (params.dateTo) query.set("date_to", params.dateTo)
+    return get<Threats>(`/api/v1/threats?${query.toString()}`, signal)
+  },
+  actionOnThreat: (messageLogId: string, action: ThreatActionValue, notes?: string) =>
+    request<ThreatRecord>(`/api/v1/threats/${messageLogId}`, {
+      method: "PATCH",
+      body: { action, notes: notes || undefined },
+    }),
+
+  alerts: (params: AlertsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.severity) query.set("severity", params.severity)
+    if (params.state) query.set("state", params.state)
+    if (params.source) query.set("source", params.source)
+    if (params.dateFrom) query.set("date_from", params.dateFrom)
+    if (params.dateTo) query.set("date_to", params.dateTo)
+    return get<Alerts>(`/api/v1/alerts?${query.toString()}`, signal)
+  },
+  actionOnAlert: (alertId: string, action: AlertActionValue, reason?: string) =>
+    request<AlertItem>(`/api/v1/alerts/${alertId}`, {
+      method: "PATCH",
+      body: { action, reason: reason || undefined },
+    }),
+
+  incidents: (params: IncidentsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.severity) query.set("severity", params.severity)
+    if (params.state) query.set("state", params.state)
+    if (params.dateFrom) query.set("date_from", params.dateFrom)
+    if (params.dateTo) query.set("date_to", params.dateTo)
+    return get<Incidents>(`/api/v1/incidents?${query.toString()}`, signal)
+  },
+  incident: (id: string, signal?: AbortSignal) => get<IncidentDetail>(`/api/v1/incidents/${id}`, signal),
+  createIncident: (title: string, severity: IncidentSeverity, messageLogIds: string[]) =>
+    request<IncidentDetail>("/api/v1/incidents", {
+      method: "POST",
+      body: { title, severity, message_log_ids: messageLogIds },
+    }),
+  addThreatToIncident: (incidentId: string, messageLogId: string) =>
+    request<IncidentDetail>(`/api/v1/incidents/${incidentId}/threats`, {
+      method: "POST",
+      body: { message_log_id: messageLogId },
+    }),
+  removeThreatFromIncident: (incidentId: string, messageLogId: string) =>
+    request<IncidentDetail>(`/api/v1/incidents/${incidentId}/threats/${messageLogId}`, { method: "DELETE" }),
+  addIncidentNote: (incidentId: string, note: string) =>
+    request<IncidentDetail>(`/api/v1/incidents/${incidentId}/notes`, {
+      method: "POST",
+      body: { note },
+    }),
+  actionOnIncident: (
+    incidentId: string,
+    action: IncidentActionValue,
+    opts: { state?: IncidentState; severity?: IncidentSeverity; reason?: string } = {},
+  ) =>
+    request<IncidentDetail>(`/api/v1/incidents/${incidentId}`, {
+      method: "PATCH",
+      body: { action, ...opts },
+    }),
+
+  users: (params: UsersParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.tier) query.set("tier", params.tier)
+    if (params.chatType) query.set("chat_type", params.chatType)
+    if (params.isActive !== undefined) query.set("is_active", String(params.isActive))
+    if (params.blocked !== undefined) query.set("blocked", String(params.blocked))
+    return get<Users>(`/api/v1/users?${query.toString()}`, signal)
+  },
+  user: (userHash: string, signal?: AbortSignal) => get<UserDetail>(`/api/v1/users/${userHash}`, signal),
+  actionOnUser: (userHash: string, action: UserActionValue, reason: string) =>
+    request<UserDetail>(`/api/v1/users/${userHash}`, {
+      method: "PATCH",
+      body: { action, reason },
+    }),
+
+  detectionRules: (params: DetectionRulesParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.ruleType) query.set("rule_type", params.ruleType)
+    if (params.status) query.set("status", params.status)
+    if (params.severity) query.set("severity", params.severity)
+    return get<DetectionRules>(`/api/v1/detection-rules?${query.toString()}`, signal)
+  },
+  createDetectionRule: (
+    name: string,
+    ruleType: DetectionRuleType,
+    condition: Record<string, unknown>,
+    severity: DetectionRuleSeverity,
+  ) =>
+    request<DetectionRuleItem>("/api/v1/detection-rules", {
+      method: "POST",
+      body: { name, rule_type: ruleType, condition, severity },
+    }),
+  actionOnDetectionRule: (
+    ruleId: string,
+    action: DetectionRuleActionValue,
+    opts: { name?: string; condition?: Record<string, unknown>; severity?: DetectionRuleSeverity } = {},
+  ) =>
+    request<DetectionRuleItem>(`/api/v1/detection-rules/${ruleId}`, {
+      method: "PATCH",
+      body: { action, ...opts },
+    }),
+
+  policies: (params: PoliciesParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.scope) query.set("scope", params.scope)
+    if (params.status) query.set("status", params.status)
+    if (params.action) query.set("action", params.action)
+    return get<Policies>(`/api/v1/policies?${query.toString()}`, signal)
+  },
+  createPolicy: (
+    name: string,
+    scope: PolicyScope,
+    condition: Record<string, unknown>,
+    action: PolicyAction,
+    priority?: number,
+  ) =>
+    request<PolicyItem>("/api/v1/policies", {
+      method: "POST",
+      body: { name, scope, condition, action, priority },
+    }),
+  actionOnPolicy: (
+    policyId: string,
+    operation: PolicyOperationValue,
+    opts: { name?: string; condition?: Record<string, unknown>; action?: PolicyAction; priority?: number } = {},
+  ) =>
+    request<PolicyItem>(`/api/v1/policies/${policyId}`, {
+      method: "PATCH",
+      body: { operation, ...opts },
+    }),
+
+  factItems: (params: FactItemsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.category) query.set("category", params.category)
+    if (params.verdict) query.set("verdict", params.verdict)
+    if (params.isActive !== undefined) query.set("is_active", String(params.isActive))
+    if (params.sourceId !== undefined) query.set("source_id", String(params.sourceId))
+    if (params.search) query.set("search", params.search)
+    return get<FactItems>(`/api/v1/knowledge/facts?${query.toString()}`, signal)
+  },
+  factItem: (id: string, signal?: AbortSignal) => get<FactItem>(`/api/v1/knowledge/facts/${id}`, signal),
+  createFactItem: (
+    sourceId: number,
+    category: FactCategory,
+    title: string,
+    claimSummary: string,
+    factExplanation: string,
+    verdict: Verdict,
+    sourceUrl: string,
+  ) =>
+    request<FactItem>("/api/v1/knowledge/facts", {
+      method: "POST",
+      body: {
+        source_id: sourceId,
+        category,
+        title,
+        claim_summary: claimSummary,
+        fact_explanation: factExplanation,
+        verdict,
+        source_url: sourceUrl,
+      },
+    }),
+  actionOnFactItem: (
+    id: string,
+    action: FactItemActionValue,
+    opts: {
+      category?: FactCategory
+      title?: string
+      claim_summary?: string
+      fact_explanation?: string
+      verdict?: Verdict
+      source_url?: string
+    } = {},
+  ) =>
+    request<FactItem>(`/api/v1/knowledge/facts/${id}`, {
+      method: "PATCH",
+      body: { action, ...opts },
+    }),
+  syncFactItem: (id: string) => request<SyncResult>(`/api/v1/knowledge/facts/${id}/sync`, { method: "POST" }),
+  syncAllFactItems: () => request<SyncResult>("/api/v1/knowledge/facts/sync-all", { method: "POST" }),
+
+  factSources: (signal?: AbortSignal) => get<FactSources>("/api/v1/knowledge/sources", signal),
+  createFactSource: (name: string, baseUrl: string, isTrusted: boolean) =>
+    request<FactSource>("/api/v1/knowledge/sources", {
+      method: "POST",
+      body: { name, base_url: baseUrl, is_trusted: isTrusted },
+    }),
+
+  importFactItemsCsv: (file: File) => {
+    const form = new FormData()
+    form.set("file", file)
+    return request<ImportCsvResult>("/api/v1/knowledge/facts/import-csv", { method: "POST", body: form })
+  },
+
+  aiMlOverview: (signal?: AbortSignal) => get<AiMlOverview>("/api/v1/ai-ml/overview", signal),
+
+  feedback: (params: FeedbackParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.feedbackType) query.set("feedback_type", params.feedbackType)
+    return get<Feedback>(`/api/v1/feedback?${query.toString()}`, signal)
+  },
+
+  datasets: (params: DatasetsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.status) query.set("status", params.status)
+    return get<Datasets>(`/api/v1/datasets?${query.toString()}`, signal)
+  },
+  dataset: (id: string, signal?: AbortSignal) => get<DatasetDetail>(`/api/v1/datasets/${id}`, signal),
+  createDataset: (name: string, version: number, source: DatasetSource, description?: string) =>
+    request<DatasetItem>("/api/v1/datasets", { method: "POST", body: { name, version, source, description } }),
+  actionOnDataset: (id: string, action: DatasetActionValue, opts: { name?: string; description?: string } = {}) =>
+    request<DatasetItem>(`/api/v1/datasets/${id}`, { method: "PATCH", body: { action, ...opts } }),
+  addDatasetSample: (
+    datasetId: string,
+    text: string,
+    label: string,
+    opts: { sourceMessageLogId?: string; sourceFeedbackId?: string } = {},
+  ) =>
+    request<DatasetSample>(`/api/v1/datasets/${datasetId}/samples`, {
+      method: "POST",
+      body: {
+        text,
+        label,
+        source_message_log_id: opts.sourceMessageLogId,
+        source_feedback_id: opts.sourceFeedbackId,
+      },
+    }),
+  removeDatasetSample: (datasetId: string, sampleId: string) =>
+    request<{ removed: boolean }>(`/api/v1/datasets/${datasetId}/samples/${sampleId}`, { method: "DELETE" }),
+
+  trainingJobs: (params: TrainingJobsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.status) query.set("status", params.status)
+    return get<TrainingJobs>(`/api/v1/training-jobs?${query.toString()}`, signal)
+  },
+  trainingJob: (id: string, signal?: AbortSignal) => get<TrainingJobItem>(`/api/v1/training-jobs/${id}`, signal),
+  createTrainingJob: (
+    datasetId: string,
+    baseModel: string,
+    opts: {
+      epochs?: number
+      learningRate?: number
+      batchSize?: number
+      validationSplit?: number
+      extraConfig?: Record<string, unknown>
+    } = {},
+  ) =>
+    request<TrainingJobItem>("/api/v1/training-jobs", {
+      method: "POST",
+      body: {
+        dataset_id: datasetId,
+        base_model: baseModel,
+        epochs: opts.epochs,
+        learning_rate: opts.learningRate,
+        batch_size: opts.batchSize,
+        validation_split: opts.validationSplit,
+        extra_config: opts.extraConfig,
+      },
+    }),
+  actionOnTrainingJob: (id: string, action: TrainingJobActionValue) =>
+    request<TrainingJobItem>(`/api/v1/training-jobs/${id}`, { method: "PATCH", body: { action } }),
+
+  modelEvaluations: (params: ModelEvaluationsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.status) query.set("status", params.status)
+    return get<ModelEvaluations>(`/api/v1/model-evaluations?${query.toString()}`, signal)
+  },
+  modelEvaluation: (id: string, signal?: AbortSignal) =>
+    get<ModelEvaluationItem>(`/api/v1/model-evaluations/${id}`, signal),
+  createModelEvaluation: (trainingJobId: string, datasetId: string) =>
+    request<ModelEvaluationItem>("/api/v1/model-evaluations", {
+      method: "POST",
+      body: { training_job_id: trainingJobId, dataset_id: datasetId },
+    }),
+  actionOnModelEvaluation: (id: string, action: ModelEvaluationActionValue) =>
+    request<ModelEvaluationItem>(`/api/v1/model-evaluations/${id}`, { method: "PATCH", body: { action } }),
+
+  modelVersions: (params: ModelVersionsParams = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams()
+    query.set("limit", String(params.limit ?? 25))
+    query.set("offset", String(params.offset ?? 0))
+    if (params.status) query.set("status", params.status)
+    return get<ModelVersions>(`/api/v1/model-versions?${query.toString()}`, signal)
+  },
+  modelVersion: (id: string, signal?: AbortSignal) => get<ModelVersionItem>(`/api/v1/model-versions/${id}`, signal),
+  actionOnModelVersion: (id: string, action: ModelVersionActionValue) =>
+    request<ModelVersionItem>(`/api/v1/model-versions/${id}`, { method: "PATCH", body: { action } }),
 }

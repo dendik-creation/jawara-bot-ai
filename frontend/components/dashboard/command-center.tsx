@@ -6,6 +6,7 @@ import { ActivityFeed } from "@/components/dashboard/activity-feed"
 import { RecentPanels } from "@/components/dashboard/recent-panels"
 import { ServiceHealthPanel } from "@/components/dashboard/service-health-panel"
 import { StatTile } from "@/components/dashboard/stat-tile"
+import { PageTitle } from "@/components/page/page-title"
 
 /**
  * Command Center — the operator's "what is happening right now" screen.
@@ -25,21 +26,19 @@ export function CommandCenter() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Command Center</h1>
-          <p className="text-sm text-muted-foreground">
-            Ringkasan keamanan operasional {summary?.window_hours ?? 24} jam terakhir.
-          </p>
-        </div>
-        <p className="text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <PageTitle
+          title="Command Center"
+          description={`Ringkasan keamanan operasional ${summary?.window_hours ?? 24} jam terakhir.`}
+        />
+        <p className="mb-6 text-xs text-muted-foreground">
           {error
             ? "Gateway tidak dapat dihubungi"
             : refreshedAt
               ? `Diperbarui ${refreshedAt.toLocaleTimeString("id-ID")}`
               : "Memuat…"}
         </p>
-      </header>
+      </div>
 
       {!available && !error ? (
         <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">

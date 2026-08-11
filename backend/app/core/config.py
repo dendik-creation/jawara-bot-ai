@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     celery_max_retries: int = 3
     celery_retry_backoff_seconds: int = 2
     celery_retry_backoff_max_seconds: int = 60
+    # Separate queue for Training Jobs (05_Training_Jobs §6's own recommendation)
+    # so a long training run never parks message-pipeline jobs behind it.
+    celery_training_queue_name: str = "jawara.training"
+    # Same isolation reasoning, one level down: a long training run shouldn't
+    # park evaluation jobs behind it either (06_Model_Evaluation.md).
+    celery_evaluation_queue_name: str = "jawara.evaluation"
 
     # Sliding-window webhook rate limit, per (session, chat) pair.
     # 20 req / 60s: a user forwarding a batch of ~10 messages passes untouched,
@@ -93,6 +99,13 @@ class Settings(BaseSettings):
     ml_timeout_embed_seconds: float = 3.0
     ml_timeout_rag_seconds: float = 3.0
     ml_timeout_generate_seconds: float = 8.0
+    # /v1/train doesn't exist in ml-service yet (05_Training_Jobs, Planned) — a
+    # short timeout so a training-job task fails fast and honestly instead of
+    # hanging on a route that will never answer.
+    ml_timeout_train_seconds: float = 5.0
+    # /v1/evaluate doesn't exist in ml-service yet either (06_Model_Evaluation,
+    # Planned) — same short-timeout-for-honest-failure reasoning as train.
+    ml_timeout_evaluate_seconds: float = 5.0
     ml_enabled: bool = True
 
     # RAG retrieval contract, fixed by 03_Database/02_VectorDB_Specifications.md.

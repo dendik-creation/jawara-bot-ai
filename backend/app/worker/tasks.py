@@ -7,7 +7,12 @@ from pydantic import ValidationError
 from app.core.config import get_settings
 from app.pipeline.orchestrator import process_message_job
 from app.schemas.queue import MessageJob
-from app.worker.celery_app import TASK_PROCESS_MESSAGE, celery_app
+from app.worker.celery_app import (
+    TASK_PROCESS_MESSAGE,
+    TASK_RUN_MODEL_EVALUATION,
+    TASK_RUN_TRAINING_JOB,
+    celery_app,
+)
 
 logger = logging.getLogger("app.worker.tasks")
 
@@ -49,6 +54,53 @@ def process_message(self, job: dict[str, Any]) -> dict[str, Any]:
 
     logger.info("job completed", extra={**log_context, "result": result})
     return result
+
+
+@celery_app.task(
+    bind=True,
+    name=TASK_RUN_TRAINING_JOB,
+    # No autoretry: training must never be retried blindly (05_Training_Jobs
+    # — the same reasoning `generate` isn't retried in MlClient). A real
+    # failure (today: /v1/train doesn't exist) is a real FAILED job, not
+    # something to silently resubmit.
+)
+def run_training_job(self, job_id: str) -> None:
+    """Run one training job through the (currently unimplemented) ML Service
+    training call. See `app.services.training_jobs.execute_training_job`.
+    """
+    logger.info("training job consumed", extra={"job_id": job_id, "task_id": self.request.id})
+    asyncio.run(_run_training_job(job_id))
+    logger.info("training job task finished", extra={"job_id": job_id})
+
+
+async def _run_training_job(job_id: str) -> None:
+    """Same one-event-loop-per-job bridge as `run_pipeline` — see its docstring."""
+    from app.services.training_jobs import execute_training_job
+
+    await execute_training_job(job_id)
+
+
+@celery_app.task(
+    bind=True,
+    name=TASK_RUN_MODEL_EVALUATION,
+    # No autoretry: same reasoning as run_training_job — a real failure
+    # (today: /v1/evaluate doesn't exist) is a real FAILED evaluation, not
+    # something to silently resubmit.
+)
+def run_model_evaluation(self, evaluation_id: str) -> None:
+    """Run one model evaluation through the (currently unimplemented) ML
+    Service evaluate call. See `app.services.model_evaluations.execute_model_evaluation`.
+    """
+    logger.info("model evaluation consumed", extra={"evaluation_id": evaluation_id, "task_id": self.request.id})
+    asyncio.run(_run_model_evaluation(evaluation_id))
+    logger.info("model evaluation task finished", extra={"evaluation_id": evaluation_id})
+
+
+async def _run_model_evaluation(evaluation_id: str) -> None:
+    """Same one-event-loop-per-job bridge as `run_pipeline` — see its docstring."""
+    from app.services.model_evaluations import execute_model_evaluation
+
+    await execute_model_evaluation(evaluation_id)
 
 
 def run_pipeline(message: MessageJob, log_context: dict[str, Any]) -> dict[str, Any]:

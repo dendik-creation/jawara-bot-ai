@@ -66,6 +66,8 @@ def stub_queries(monkeypatch):
     monkeypatch.setattr("app.services.dashboard.summary", AsyncMock(return_value=SUMMARY))
     monkeypatch.setattr("app.services.dashboard.recent_activity", AsyncMock(return_value=ACTIVITY))
     monkeypatch.setattr("app.services.dashboard.recent_threats", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.dashboard.recent_alerts", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.dashboard.recent_incidents", AsyncMock(return_value=[]))
 
 
 def test_summary_returns_command_center_metrics(stub_queries):
@@ -84,14 +86,27 @@ def test_activity_feed_never_exposes_message_content(stub_queries):
     assert body["items"][0]["event"] == "THREAT_DETECTED"
 
 
-def test_incidents_and_alerts_report_unavailable_rather_than_zero(stub_queries):
+def test_recent_panels_are_all_real_now(stub_queries):
     body = client.get("/api/v1/dashboard/recent").json()
 
-    # A zero would read as "a quiet day"; there is no incidents table at all.
-    assert body["incidents"]["available"] is False
-    assert body["incidents"]["reason"] == "incidents_table_not_implemented"
-    assert body["alerts"]["available"] is False
+    # Threats (004), Alerts (005), and Incidents (006) all have real tables now.
     assert body["threats"]["available"] is True
+    assert body["alerts"]["available"] is True
+    assert body["incidents"]["available"] is True
+
+
+def test_alerts_report_unavailable_on_db_outage(monkeypatch):
+    monkeypatch.setattr("app.services.dashboard.summary", AsyncMock(return_value=SUMMARY))
+    monkeypatch.setattr("app.services.dashboard.recent_threats", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.dashboard.recent_incidents", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.dashboard.recent_alerts", AsyncMock(side_effect=ConnectionError("db down"))
+    )
+
+    body = client.get("/api/v1/dashboard/recent").json()
+
+    assert body["alerts"]["available"] is False
+    assert body["alerts"]["reason"] == "database_unavailable"
 
 
 def test_database_outage_reports_unavailable_instead_of_failing(monkeypatch):

@@ -3,10 +3,12 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import * as React from "react"
-import { ChevronsUpDown, KeyRound, LogOut, ShieldCheck } from "lucide-react"
+import { ChevronsUpDown, KeyRound, LogOut, Moon, ShieldCheck, Sun } from "lucide-react"
+import { useTheme } from "next-themes"
 
 import { useAuth } from "@/components/auth/auth-provider"
 import { ChangePasswordDialog } from "@/components/auth/change-password-dialog"
+import { PageContainer } from "@/components/layout/page-container"
 import { NAVIGATION } from "@/components/layout/navigation"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -111,9 +113,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <SidebarInset>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
           <SidebarTrigger />
-          <span className="text-sm text-muted-foreground">{screenTitle(pathname)}</span>
         </header>
-        <div className="min-w-0 flex-1 px-4 py-6 lg:px-8">{children}</div>
+        <div className="min-w-0 flex-1">
+          <PageContainer>{children}</PageContainer>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   )
@@ -121,10 +124,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function OperatorMenu() {
   const { operator, signOut } = useAuth()
+  const { resolvedTheme, setTheme } = useTheme()
   const [signingOut, setSigningOut] = React.useState(false)
   const [changingPassword, setChangingPassword] = React.useState(false)
 
   if (!operator) return null
+
+  // Safe to read directly: this menu's content only mounts once the dropdown
+  // opens, well after hydration, so there is no SSR/client theme mismatch to
+  // guard against here.
+  const isDark = resolvedTheme === "dark"
 
   return (
     <SidebarMenu>
@@ -156,6 +165,10 @@ function OperatorMenu() {
               <KeyRound className="size-4" />
               Ganti kata sandi
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTheme(isDark ? "light" : "dark")}>
+              {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              {isDark ? "Mode terang" : "Mode gelap"}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={signingOut}
@@ -178,14 +191,4 @@ function OperatorMenu() {
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2)
   return parts.map((part) => part[0]?.toUpperCase() ?? "").join("") || "?"
-}
-
-/** Breadcrumb-lite: enough to say where you are without a second nav model. */
-function screenTitle(pathname: string): string {
-  for (const section of NAVIGATION) {
-    for (const item of section.items) {
-      if (item.href === pathname) return item.label
-    }
-  }
-  return "Control Panel"
 }

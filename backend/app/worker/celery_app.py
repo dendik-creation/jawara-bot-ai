@@ -5,6 +5,8 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 
 TASK_PROCESS_MESSAGE = "app.worker.tasks.process_message"
+TASK_RUN_TRAINING_JOB = "app.worker.tasks.run_training_job"
+TASK_RUN_MODEL_EVALUATION = "app.worker.tasks.run_model_evaluation"
 
 
 def create_celery() -> Celery:

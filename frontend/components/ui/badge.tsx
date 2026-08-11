@@ -12,9 +12,12 @@ const badgeVariants = cva(
         outline: "border-border text-muted-foreground",
         // Risk colours follow the WhatsApp reply's own status indicators:
         // red / amber / green, with a distinct neutral for "not checked".
+        // Each routes through one CSS-variable token (light/dark pair in
+        // globals.css) the same way `destructive` does, instead of raw
+        // Tailwind palette literals with a manual `dark:` override.
         high: "border-transparent bg-destructive/15 text-destructive",
-        medium: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400",
-        low: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+        medium: "border-transparent bg-risk-medium/15 text-risk-medium",
+        low: "border-transparent bg-risk-low/15 text-risk-low",
         unknown: "border-border text-muted-foreground",
       },
     },

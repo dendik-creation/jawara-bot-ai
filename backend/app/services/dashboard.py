@@ -10,9 +10,9 @@ Two rules shape every query in this module:
 Control Panel shows metadata and classifications; reading message bodies is a
 separate screen with its own privacy policy (04_Message_Inspection).
 
-**Never invent a number.** Threats, incidents and alerts have no tables yet.
-Those blocks return `available: false` with a reason instead of a zero, because
-a zero is indistinguishable from "quiet day" and would be read as one.
+**Never invent a number.** If a query fails, the block returns `available:
+false` with a reason instead of a zero, because a zero is indistinguishable
+from "quiet day" and would be read as one.
 """
 
 import logging
@@ -103,6 +103,20 @@ LIMIT $1 OFFSET $2
 
 MESSAGES_COUNT_SQL = "SELECT count(*) FROM message_logs"
 
+RECENT_ALERTS_SQL = """
+SELECT id, severity::text AS severity, title, source, state::text AS state, created_at
+FROM alerts
+ORDER BY created_at DESC
+LIMIT $1
+"""
+
+RECENT_INCIDENTS_SQL = """
+SELECT id, sequence_number, title, severity::text AS severity, state::text AS state, created_at
+FROM incidents
+ORDER BY created_at DESC
+LIMIT $1
+"""
+
 
 async def _connect(settings: Settings) -> asyncpg.Connection:
     return await asyncpg.connect(settings.database_url, timeout=5)
@@ -190,6 +204,56 @@ async def recent_threats(limit: int = 10, settings: Settings | None = None) -> l
     ]
 
 
+async def recent_alerts(limit: int = 10, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """Recent Panels' Alerts column — a plain recency list, not the full
+    filterable view (that's `services.alerts.list_alerts`, behind `/alerts`).
+    """
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        rows = await conn.fetch(RECENT_ALERTS_SQL, limit)
+    finally:
+        await conn.close()
+
+    return [
+        {
+            "id": str(row["id"]),
+            "at": row["created_at"].isoformat(),
+            "severity": row["severity"],
+            "title": row["title"],
+            "source": row["source"],
+            "state": row["state"],
+        }
+        for row in rows
+    ]
+
+
+async def recent_incidents(limit: int = 10, settings: Settings | None = None) -> list[dict[str, Any]]:
+    """Recent Panels' Incidents column — a plain recency list, not the full
+    case-file view (that's `services.incidents.get_incident`, behind `/incidents/{id}`).
+    """
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        rows = await conn.fetch(RECENT_INCIDENTS_SQL, limit)
+    finally:
+        await conn.close()
+
+    from app.services.incidents import _code as incident_code
+
+    return [
+        {
+            "id": str(row["id"]),
+            "code": incident_code(row["sequence_number"], row["created_at"]),
+            "at": row["created_at"].isoformat(),
+            "title": row["title"],
+            "severity": row["severity"],
+            "state": row["state"],
+        }
+        for row in rows
+    ]
+
+
 async def list_messages(
     limit: int = 25, offset: int = 0, settings: Settings | None = None
 ) -> dict[str, Any]:
@@ -241,8 +305,3 @@ async def delete_message(message_id: str, settings: Settings | None = None) -> b
     finally:
         await conn.close()
     return result.endswith(" 1")
-
-
-def unavailable(reason: str) -> dict[str, Any]:
-    """Honest empty state for a block whose data source does not exist yet."""
-    return {"available": False, "reason": reason, "items": []}

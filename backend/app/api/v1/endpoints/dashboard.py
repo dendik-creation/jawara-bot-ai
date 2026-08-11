@@ -128,10 +128,8 @@ async def dashboard_activity_stream(request: Request) -> StreamingResponse:
 async def dashboard_recent(limit: int = Query(default=10, ge=1, le=50)) -> dict[str, object]:
     """Recent threats / incidents / alerts.
 
-    Only threats have a data source today. Incidents and alerts report
-    `available: false` rather than an empty list that would read as "none
-    happened" (08_Dashboard, 05_Incident_Management and 04_Alert_Center are
-    Planned).
+    All three have real data sources now (`threat_cases` migration 004,
+    `alerts` migration 005, `incidents` migration 006).
     """
     settings = get_settings()
     try:
@@ -140,10 +138,22 @@ async def dashboard_recent(limit: int = Query(default=10, ge=1, le=50)) -> dict[
         logger.error("recent threats query failed", exc_info=True)
         threats = {"available": False, "reason": "database_unavailable", "items": []}
 
+    try:
+        alerts = {"available": True, "items": await dashboard.recent_alerts(limit, settings)}
+    except Exception:  # noqa: BLE001
+        logger.error("recent alerts query failed", exc_info=True)
+        alerts = {"available": False, "reason": "database_unavailable", "items": []}
+
+    try:
+        incidents = {"available": True, "items": await dashboard.recent_incidents(limit, settings)}
+    except Exception:  # noqa: BLE001
+        logger.error("recent incidents query failed", exc_info=True)
+        incidents = {"available": False, "reason": "database_unavailable", "items": []}
+
     return {
         "threats": threats,
-        "incidents": dashboard.unavailable("incidents_table_not_implemented"),
-        "alerts": dashboard.unavailable("alerts_table_not_implemented"),
+        "incidents": incidents,
+        "alerts": alerts,
     }
 
 

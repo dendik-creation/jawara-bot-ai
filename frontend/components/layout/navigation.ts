@@ -7,6 +7,16 @@
  * `href: null` marks a screen that is specified but not built. It renders as a
  * disabled row with a "Belum tersedia" badge instead of a link to an empty page,
  * so the navigation shows the whole product without pretending it exists.
+ *
+ * "Live Activity" is not a nav entry: it's the activity feed embedded in
+ * Command Center, not a distinct route — linking it here would just be a
+ * second name for `/`.
+ *
+ * "Risk Profiles" and "Blocklist" are not separate nav entries either: both
+ * are the same `user_subscriptions` row set as "Users", viewed through a
+ * preset filter (risk tier, or `blocked=true`) rather than a different
+ * dataset — see `/users`. Two more pages that show the same rows would be
+ * the same redundant-screen problem "Live Activity" was.
  */
 
 export type NavItem = {
@@ -27,38 +37,33 @@ export const NAVIGATION: NavSection[] = [
   {
     title: "Monitoring",
     items: [
-      { label: "Live Activity", href: "/" },
-      { label: "Threats", href: null },
+      { label: "Threats", href: "/threats" },
       { label: "Messages", href: "/messages" },
-      { label: "Incidents", href: null },
+      { label: "Incidents", href: "/incidents" },
     ],
   },
   {
-    title: "Users",
-    items: [
-      { label: "Users", href: null },
-      { label: "Risk Profiles", href: null },
-      { label: "Blocklist", href: null },
-    ],
+    title: "Identity",
+    items: [{ label: "Users", href: "/users" }],
   },
   {
     title: "Security",
     items: [
-      { label: "Policies", href: null },
-      { label: "Detection Rules", href: null },
-      { label: "Alerts", href: null },
-      { label: "Audit Logs", href: null },
+      { label: "Policies", href: "/policies" },
+      { label: "Detection Rules", href: "/detection-rules" },
+      { label: "Alerts", href: "/alerts" },
+      { label: "Audit Logs", href: "/audit-log" },
     ],
   },
   {
     title: "AI / ML",
     items: [
-      { label: "Overview", href: null },
-      { label: "Knowledge Base", href: null },
-      { label: "Datasets", href: null },
-      { label: "Training Jobs", href: null },
-      { label: "Models", href: null },
-      { label: "Evaluation", href: null },
+      { label: "Overview", href: "/ai-ml-overview" },
+      { label: "Knowledge Base", href: "/knowledge-base" },
+      { label: "Datasets", href: "/datasets" },
+      { label: "Training Jobs", href: "/training-jobs" },
+      { label: "Models", href: "/models" },
+      { label: "Evaluation", href: "/evaluation" },
     ],
   },
   {

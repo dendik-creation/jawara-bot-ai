@@ -77,7 +77,12 @@ services:
     build: ./backend
     container_name: jawara-worker
     restart: always
-    command: celery -A app.worker worker --loglevel=info
+    # -Q jawara.messages,jawara.training,jawara.evaluation: one worker consumes
+    # all three queues — Training Jobs (05_Training_Jobs §6) and Model
+    # Evaluation (06_Model_Evaluation.md) each get their own logical queue so
+    # a long-running job of one kind doesn't park message-pipeline jobs (or
+    # each other) behind it, without standing up separate worker processes yet.
+    command: celery -A app.worker worker --loglevel=info -Q jawara.messages,jawara.training,jawara.evaluation
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - QDRANT_HOST=qdrant

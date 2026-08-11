@@ -1,15 +1,23 @@
 "use client"
 
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import * as React from "react"
-import { ChevronsUpDown, KeyRound, LogOut, Moon, ShieldCheck, Sun } from "lucide-react"
+import { ChevronsUpDown, KeyRound, LogOut, Moon, Sun, UserPen } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { useAuth } from "@/components/auth/auth-provider"
 import { ChangePasswordDialog } from "@/components/auth/change-password-dialog"
+import { EditProfileDialog } from "@/components/auth/edit-profile-dialog"
 import { PageContainer } from "@/components/layout/page-container"
-import { NAVIGATION } from "@/components/layout/navigation"
+import { NAVIGATION, type NavItem } from "@/components/layout/navigation"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -26,7 +34,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -48,15 +55,33 @@ import {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
+  const activeSectionTitle = React.useMemo(() => {
+    const section = NAVIGATION.find(
+      (s) => s.title && s.items.some((item) => item.href === pathname)
+    )
+    return section?.title ?? null
+  }, [pathname])
+
+  // Sections the operator opened/closed by hand. The section containing the
+  // active route is folded in at render time below, so it always stays open —
+  // no effect needed to "catch up" state when the route changes.
+  const [toggledSections, setToggledSections] = React.useState<string[]>([])
+
+  const openSections = React.useMemo(() => {
+    const set = new Set(toggledSections)
+    if (activeSectionTitle) set.add(activeSectionTitle)
+    return [...set]
+  }, [toggledSections, activeSectionTitle])
+
   return (
     <SidebarProvider>
-      <Sidebar collapsible="icon">
+      <Sidebar collapsible="offcanvas">
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" render={<Link href="/" />} tooltip="JAWARA Control Panel">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <ShieldCheck className="size-4" />
+                <div className="flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg bg-background p-1 ring-1 ring-sidebar-border">
+                  <Image src="/icon.png" alt="" width={24} height={24} className="size-full object-contain" priority />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
                   <span className="truncate text-sm font-semibold">JAWARA</span>
@@ -67,41 +92,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </SidebarMenu>
         </SidebarHeader>
 
-        <SidebarContent>
-          {NAVIGATION.map((section) => (
-            <SidebarGroup key={section.title ?? "root"}>
-              {section.title ? <SidebarGroupLabel>{section.title}</SidebarGroupLabel> : null}
+        <SidebarContent className="gap-2">
+          {NAVIGATION.filter((section) => !section.title).map((section) => (
+            <SidebarGroup key="root">
               <SidebarGroupContent>
-                <SidebarMenu>
+                <SidebarMenu className="gap-1">
                   {section.items.map((item) => (
-                    <SidebarMenuItem key={`${section.title ?? "root"}-${item.label}`}>
-                      {item.href ? (
-                        <SidebarMenuButton
-                          render={<Link href={item.href} />}
-                          isActive={pathname === item.href}
-                          tooltip={item.label}
-                        >
-                          <span>{item.label}</span>
-                        </SidebarMenuButton>
-                      ) : (
-                        <SidebarMenuButton
-                          aria-disabled
-                          disabled
-                          tooltip={`${item.label} — belum tersedia`}
-                          className="text-muted-foreground/60"
-                        >
-                          <span>{item.label}</span>
-                          <Badge variant="outline" className="ml-auto group-data-[collapsible=icon]:hidden">
-                            belum
-                          </Badge>
-                        </SidebarMenuButton>
-                      )}
-                    </SidebarMenuItem>
+                    <NavMenuItem key={item.label} item={item} pathname={pathname} />
                   ))}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
           ))}
+
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <Accordion
+                multiple
+                value={openSections}
+                onValueChange={(value) => setToggledSections(value as string[])}
+                className="gap-1"
+              >
+                {NAVIGATION.filter((section) => section.title).map((section) => (
+                  <AccordionItem key={section.title} value={section.title as string} className="border-none">
+                    <AccordionTrigger className="rounded-md px-2.5 py-2.5 text-meta font-medium text-sidebar-foreground/70 no-underline! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:no-underline! focus-visible:bg-sidebar-accent">
+                      {section.title}
+                    </AccordionTrigger>
+                    <AccordionContent className="px-0 pt-1 pb-1.5">
+                      <SidebarMenu className="gap-1">
+                        {section.items.map((item) => (
+                          <NavMenuItem key={item.label} item={item} pathname={pathname} />
+                        ))}
+                      </SidebarMenu>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </SidebarGroupContent>
+          </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter>
@@ -122,11 +150,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   )
 }
 
+function NavMenuItem({ item, pathname }: { item: NavItem; pathname: string }) {
+  const Icon = item.icon
+
+  return (
+    <SidebarMenuItem>
+      {item.href ? (
+        <SidebarMenuButton
+          className="h-10 gap-3 px-3 text-nav no-underline!"
+          render={<Link href={item.href} />}
+          isActive={pathname === item.href}
+          tooltip={item.label}
+        >
+          <Icon className="size-[18px]" />
+          <span>{item.label}</span>
+        </SidebarMenuButton>
+      ) : (
+        <SidebarMenuButton
+          aria-disabled
+          disabled
+          tooltip={`${item.label} — belum tersedia`}
+          className="h-10 gap-3 px-3 text-nav text-muted-foreground/60"
+        >
+          <Icon className="size-[18px]" />
+          <span>{item.label}</span>
+          <Badge variant="outline" className="ml-auto">
+            belum
+          </Badge>
+        </SidebarMenuButton>
+      )}
+    </SidebarMenuItem>
+  )
+}
+
 function OperatorMenu() {
   const { operator, signOut } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
   const [signingOut, setSigningOut] = React.useState(false)
   const [changingPassword, setChangingPassword] = React.useState(false)
+  const [editingProfile, setEditingProfile] = React.useState(false)
 
   if (!operator) return null
 
@@ -161,6 +223,10 @@ function OperatorMenu() {
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setEditingProfile(true)}>
+              <UserPen className="size-4" />
+              Edit profil
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setChangingPassword(true)}>
               <KeyRound className="size-4" />
               Ganti kata sandi
@@ -183,6 +249,7 @@ function OperatorMenu() {
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
+      <EditProfileDialog open={editingProfile} onOpenChange={setEditingProfile} />
       <ChangePasswordDialog open={changingPassword} onOpenChange={setChangingPassword} />
     </SidebarMenu>
   )

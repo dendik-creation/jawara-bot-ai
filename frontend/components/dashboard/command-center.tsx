@@ -3,6 +3,9 @@
 import { api, type DashboardSummary, type WhatsAppSessions } from "@/lib/api"
 import { usePolling } from "@/hooks/use-polling"
 import { ActivityFeed } from "@/components/dashboard/activity-feed"
+import { DemoTrendChart } from "@/components/dashboard/charts/demo-trend-chart"
+import { IntentBarChart } from "@/components/dashboard/charts/intent-bar-chart"
+import { SeverityDonutChart } from "@/components/dashboard/charts/severity-donut-chart"
 import { RecentPanels } from "@/components/dashboard/recent-panels"
 import { ServiceHealthPanel } from "@/components/dashboard/service-health-panel"
 import { StatTile } from "@/components/dashboard/stat-tile"
@@ -57,6 +60,12 @@ export function CommandCenter() {
           value={sessions?.available ? sessions.active : null}
           hint={sessions?.available ? undefined : "WAHA belum dapat dihubungi"}
         />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <SeverityDonutChart breakdown={value("severity_breakdown")} />
+        <IntentBarChart breakdown={value("intent_breakdown")} />
+        <DemoTrendChart />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">

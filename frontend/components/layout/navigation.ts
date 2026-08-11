@@ -19,9 +19,30 @@
  * the same redundant-screen problem "Live Activity" was.
  */
 
+import {
+  Activity,
+  Bell,
+  BookOpen,
+  Boxes,
+  Cpu,
+  Database,
+  FileCheck2,
+  Gauge,
+  LayoutDashboard,
+  ListChecks,
+  MessageSquare,
+  ScrollText,
+  ShieldAlert,
+  Siren,
+  Sparkles,
+  Users,
+  type LucideIcon,
+} from "lucide-react"
+
 export type NavItem = {
   label: string
   href: string | null
+  icon: LucideIcon
 }
 
 export type NavSection = {
@@ -32,42 +53,42 @@ export type NavSection = {
 export const NAVIGATION: NavSection[] = [
   {
     title: null,
-    items: [{ label: "Command Center", href: "/" }],
+    items: [{ label: "Command Center", href: "/", icon: LayoutDashboard }],
   },
   {
     title: "Monitoring",
     items: [
-      { label: "Threats", href: "/threats" },
-      { label: "Messages", href: "/messages" },
-      { label: "Incidents", href: "/incidents" },
+      { label: "Threats", href: "/threats", icon: ShieldAlert },
+      { label: "Messages", href: "/messages", icon: MessageSquare },
+      { label: "Incidents", href: "/incidents", icon: Siren },
     ],
   },
   {
     title: "Identity",
-    items: [{ label: "Users", href: "/users" }],
+    items: [{ label: "Users", href: "/users", icon: Users }],
   },
   {
     title: "Security",
     items: [
-      { label: "Policies", href: "/policies" },
-      { label: "Detection Rules", href: "/detection-rules" },
-      { label: "Alerts", href: "/alerts" },
-      { label: "Audit Logs", href: "/audit-log" },
+      { label: "Policies", href: "/policies", icon: FileCheck2 },
+      { label: "Detection Rules", href: "/detection-rules", icon: ListChecks },
+      { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Audit Logs", href: "/audit-log", icon: ScrollText },
     ],
   },
   {
     title: "AI / ML",
     items: [
-      { label: "Overview", href: "/ai-ml-overview" },
-      { label: "Knowledge Base", href: "/knowledge-base" },
-      { label: "Datasets", href: "/datasets" },
-      { label: "Training Jobs", href: "/training-jobs" },
-      { label: "Models", href: "/models" },
-      { label: "Evaluation", href: "/evaluation" },
+      { label: "Overview", href: "/ai-ml-overview", icon: Sparkles },
+      { label: "Knowledge Base", href: "/knowledge-base", icon: BookOpen },
+      { label: "Datasets", href: "/datasets", icon: Database },
+      { label: "Training Jobs", href: "/training-jobs", icon: Cpu },
+      { label: "Models", href: "/models", icon: Boxes },
+      { label: "Evaluation", href: "/evaluation", icon: Gauge },
     ],
   },
   {
     title: "System",
-    items: [{ label: "Service Health", href: "/system/service-health" }],
+    items: [{ label: "Service Health", href: "/system/service-health", icon: Activity }],
   },
 ]

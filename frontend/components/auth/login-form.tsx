@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation"
 import * as React from "react"
-import { Loader2, ShieldCheck } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { useAuth } from "@/components/auth/auth-provider"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -63,12 +63,9 @@ export function LoginForm() {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader>
-        <div className="mb-2 flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <ShieldCheck className="size-5" />
-        </div>
-        <CardTitle>Masuk ke Control Panel</CardTitle>
+        <CardTitle>Masuk</CardTitle>
         <CardDescription>
-          Akun operator JAWARA. Dibuat oleh administrator, bukan pendaftaran mandiri.
+          Masuk untuk akses control panel Jawara.
         </CardDescription>
       </CardHeader>
 
@@ -91,7 +88,7 @@ export function LoginForm() {
               autoFocus
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="operator@instansi.go.id"
+              placeholder="example@email.com"
               disabled={submitting}
             />
           </div>
@@ -111,14 +108,10 @@ export function LoginForm() {
             />
           </div>
 
-          <Button type="submit" disabled={submitting || !email || password.length < 8}>
+          <Button type="submit" className="mt-2" disabled={submitting || !email || password.length < 8}>
             {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-            {submitting ? "Memeriksa…" : "Masuk"}
+            {submitting ? "" : "Masuk"}
           </Button>
-
-          <p className="text-xs text-muted-foreground">
-            Sesi berakhir otomatis setelah 8 jam. Percobaan masuk dibatasi 5 kali per 5 menit.
-          </p>
         </form>
       </CardContent>
     </Card>

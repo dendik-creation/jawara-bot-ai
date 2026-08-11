@@ -23,17 +23,26 @@ const LABELS: Record<string, string> = {
 
 const ORDER = ["api_gateway", "ml_service", "waha", "postgres", "redis", "qdrant"]
 
-export function ServiceHealthPanel({ intervalMs = 15000 }: { intervalMs?: number }) {
+export function ServiceHealthPanel({
+  intervalMs = 15000,
+  showHeader = true,
+}: {
+  intervalMs?: number
+  /** Off on the dedicated Service Health page — its PageTitle already says this. */
+  showHeader?: boolean
+}) {
   const { data, error, loading } = usePolling<ServiceHealth>(api.services, intervalMs)
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Service Health</CardTitle>
-        <CardDescription>
-          Ketersediaan dasar tiap service. Bukan analitik infrastruktur.
-        </CardDescription>
-      </CardHeader>
+      {showHeader ? (
+        <CardHeader>
+          <CardTitle>Service Health</CardTitle>
+          <CardDescription>
+            Ketersediaan dasar tiap service. Bukan analitik infrastruktur.
+          </CardDescription>
+        </CardHeader>
+      ) : null}
       <CardContent>
         {error ? (
           <p className="text-sm text-muted-foreground">

@@ -39,7 +39,7 @@ export function PageTitle({ title, description, back }: PageTitleProps) {
       ) : null}
 
       <div className="flex min-w-0 flex-col gap-1">
-        <h1 className="truncate text-xl font-semibold text-foreground md:text-2xl">{title}</h1>
+        <h1 className="truncate text-page-title text-foreground">{title}</h1>
         {description ? (
           <p className="line-clamp-2 text-sm text-muted-foreground md:line-clamp-1">{description}</p>
         ) : null}

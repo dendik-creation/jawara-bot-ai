@@ -2,10 +2,32 @@
 
 import * as React from "react"
 
+import { StatusBreakdownChart } from "@/components/dashboard/charts/status-breakdown-chart"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, GatewayError, type AiMlOverview } from "@/lib/api"
+
+const LEGEND: { key: string; label: string; color: string }[] = [
+  { key: "healthy", label: "Sehat / live", color: "var(--risk-low)" },
+  { key: "in_progress", label: "Berjalan / draft", color: "var(--risk-medium)" },
+  { key: "failed", label: "Gagal / ditolak", color: "var(--destructive)" },
+  { key: "neutral", label: "Nonaktif / arsip", color: "var(--muted-foreground)" },
+]
+
+function StatusLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Warna status:</span>
+      {LEGEND.map((item) => (
+        <span key={item.key} className="flex items-center gap-1.5">
+          <span className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -71,7 +93,9 @@ export function AiMlOverviewGrid() {
   const ml = data.ml_service
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <div className="flex flex-col gap-4">
+      <StatusLegend />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       <Card>
         <CardHeader>
           <CardTitle>Knowledge Base</CardTitle>
@@ -102,9 +126,7 @@ export function AiMlOverviewGrid() {
           {rules.available ? (
             <>
               <StatRow label="Total" value={rules.total} />
-              {Object.entries(rules.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={rules.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({rules.reason}).</p>
@@ -121,9 +143,7 @@ export function AiMlOverviewGrid() {
           {policies.available ? (
             <>
               <StatRow label="Total" value={policies.total} />
-              {Object.entries(policies.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={policies.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({policies.reason}).</p>
@@ -140,9 +160,7 @@ export function AiMlOverviewGrid() {
           {datasets.available ? (
             <>
               <StatRow label="Total" value={datasets.total} />
-              {Object.entries(datasets.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={datasets.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({datasets.reason}).</p>
@@ -159,9 +177,7 @@ export function AiMlOverviewGrid() {
           {feedback.available ? (
             <>
               <StatRow label="Total" value={feedback.total} />
-              {Object.entries(feedback.by_type).map(([type, count]) => (
-                <StatRow key={type} label={type} value={count} />
-              ))}
+              <StatusBreakdownChart data={feedback.by_type} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({feedback.reason}).</p>
@@ -207,9 +223,7 @@ export function AiMlOverviewGrid() {
           {trainingJobs.available ? (
             <>
               <StatRow label="Total" value={trainingJobs.total} />
-              {Object.entries(trainingJobs.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={trainingJobs.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({trainingJobs.reason}).</p>
@@ -226,9 +240,7 @@ export function AiMlOverviewGrid() {
           {evaluation.available ? (
             <>
               <StatRow label="Total" value={evaluation.total} />
-              {Object.entries(evaluation.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={evaluation.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({evaluation.reason}).</p>
@@ -245,15 +257,14 @@ export function AiMlOverviewGrid() {
           {modelRegistry.available ? (
             <>
               <StatRow label="Total" value={modelRegistry.total} />
-              {Object.entries(modelRegistry.by_status).map(([status, count]) => (
-                <StatRow key={status} label={status} value={count} />
-              ))}
+              <StatusBreakdownChart data={modelRegistry.by_status} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Belum tersedia ({modelRegistry.reason}).</p>
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }

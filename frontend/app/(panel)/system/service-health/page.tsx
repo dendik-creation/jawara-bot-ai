@@ -9,7 +9,7 @@ export default function ServiceHealthPage() {
         description="Ketersediaan dasar tiap service: apakah service-nya jalan sekarang. Tren CPU/RAM/disk berada di luar cakupan."
       />
 
-      <ServiceHealthPanel intervalMs={10000} />
+      <ServiceHealthPanel intervalMs={10000} showHeader={false} />
     </div>
   )
 }

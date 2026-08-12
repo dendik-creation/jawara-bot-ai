@@ -2,14 +2,13 @@
 
 Orchestration/tracking layer for a controlled async training operation — the
 spec's own responsibility table names "execute training, produce artifact"
-as ML Service's job without specifying an algorithm; `ml-service` has no
-`/v1/train` route at all yet. `execute_training_job` (run from the Celery
-worker, `app.worker.tasks.run_training_job`) genuinely calls
-`MlClient.train(...)` and genuinely fails today — the same honesty pattern
-already live in `/v1/classify` ("model_not_available") rather than
-fabricating a completed training run. `COMPLETED`/`metrics`/
-`generated_model_version` are real columns with no reachable path until a
-real `/v1/train` exists — written for that day, not faked for this one.
+as ML Service's job (TF-IDF + LogisticRegression, `ml-service/app/models/
+classifier.py`). `execute_training_job` (run from the Celery worker,
+`app.worker.tasks.run_training_job`) calls the real `MlClient.train(...)`
+with the dataset's rows shipped inline (ml-service has no database of its
+own) and persists whatever really happens — `response.result` (which
+includes the artifact's `artifact_sha256`, later trusted by evaluation and
+inference) lands verbatim in `metrics`, never fabricated.
 """
 
 import json
@@ -265,10 +264,22 @@ async def execute_training_job(job_id: str, settings: Settings | None = None) ->
         if isinstance(extra_config, str):
             extra_config = json.loads(extra_config)
 
+        # ml-service has no database of its own — ship the dataset's rows
+        # inline rather than a reference it could look up itself.
+        sample_rows = await conn.fetch(
+            "SELECT text, label FROM dataset_samples WHERE dataset_id = $1", job["dataset_id"]
+        )
+        samples = [{"text": row["text"], "label": row["label"]} for row in sample_rows]
+
         try:
             response = await MlClient(settings).train(
                 request_id=f"train-{job_id}",
-                dataset_ref={"id": str(job["dataset_id"]), "name": job["dataset_name"], "version": job["dataset_version"]},
+                dataset_ref={
+                    "id": str(job["dataset_id"]),
+                    "name": job["dataset_name"],
+                    "version": job["dataset_version"],
+                    "samples": samples,
+                },
                 base_model=job["base_model"],
                 config={
                     "epochs": job["epochs"],

@@ -110,6 +110,31 @@ async def get_model_version(model_version_id: str, settings: Settings | None = N
     return _row_to_item(row) if row else None
 
 
+async def get_production_model(settings: Settings | None = None) -> dict[str, str] | None:
+    """The single `PRODUCTION` model_version's `(model_version, artifact_sha256)`
+    — what the pipeline needs to call `/v1/classify`. `None` when nothing has
+    been promoted yet (the common case right after this ships), which callers
+    must treat as "skip ML classification", never as an error.
+    """
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT t.generated_model_version, t.metrics->>'artifact_sha256' AS artifact_sha256
+            FROM model_versions mv
+            JOIN training_jobs t ON t.id = mv.training_job_id
+            WHERE mv.status = 'PRODUCTION'::model_version_status_enum
+            """
+        )
+    finally:
+        await conn.close()
+
+    if row is None or not row["generated_model_version"] or not row["artifact_sha256"]:
+        return None
+    return {"model_version": row["generated_model_version"], "artifact_sha256": row["artifact_sha256"]}
+
+
 async def create_model_version_candidate(
     conn: asyncpg.Connection, training_job_id: str, model_evaluation_id: str
 ) -> str:

@@ -63,20 +63,36 @@ docker exec jawara-gateway python -m app.vector.qdrant_setup
 docker exec jawara-gateway python -m app.scripts.seed_facts
 docker exec jawara-gateway python -m app.scripts.ingest_knowledge
 
-# Control Panel account — nothing can sign in until this exists.
-docker exec -it jawara-gateway python -m app.scripts.create_operator \
-  --email you@example.com --name "Your Name"
+# Control Panel account — nothing can sign in until this exists. Reads
+# OPERATOR_EMAIL / OPERATOR_NAME / OPERATOR_PASSWORD from .env; re-running is
+# safe, an existing account is left untouched.
+docker exec jawara-gateway python -m app.scripts.create_operator
 ```
 
 All services have health checks; `api-gateway` and `frontend-dashboard` wait on their dependencies via `condition: service_healthy`.
 
 The stack runs with **no third-party API keys at all**. Absent keys are a configuration state, not an error: threat-intel verdicts degrade to `UNKNOWN`, and the LLM falls back to a deterministic composer that still satisfies the four-section reply contract.
 
+## Production / VPS deployment
+
+Every service except `waha`'s dashboard port binds to `127.0.0.1` — Postgres, Redis, Qdrant, `api-gateway`, `ml-service`, and `frontend-dashboard` are reachable from the host machine (for debugging) but never the public internet, regardless of firewall. Redis in particular has **no authentication mechanism in this codebase at all**, so this binding is the only thing standing between it and the open internet if it were published.
+
+This repo ships no reverse proxy or TLS termination — bring your own (e.g. join the frontend/api-gateway containers to an existing Nginx Proxy Manager network and point proxy hosts at `jawara-dashboard:3000` / `jawara-gateway:8000` by container name, over Docker's internal DNS, not a published host port).
+
+Before exposing this publicly:
+- Rotate every `changeme`/default-looking credential in `.env` — WAHA dashboard password, Postgres password, `ML_SERVICE_API_KEY`, `USER_HASH_SALT`, operator password.
+- Set `CORS_ALLOW_ORIGINS` to the real frontend origin(s) and `NEXT_PUBLIC_API_URL` to the real API origin — the latter is baked in at Docker **build** time (a build arg, not just runtime env), so `frontend-dashboard` needs `docker compose up -d --build frontend-dashboard` after changing it, not just a restart.
+- `./scripts/backup.sh` — Postgres dump + Qdrant snapshot to `backups/<timestamp>/` (gitignored). No scheduling built in; wire it into cron/systemd-timer yourself.
+
 ## Status
 
 The detection pipeline runs end to end — webhook in, WhatsApp reply out, audit row written. Verified against the live stack: intent classification, RAG retrieval at 0.87 similarity against real Qdrant, risk assessment, response generation, and a `message_logs` row that survives webhook retries without duplicating.
 
-What does not exist yet: a trained classification model (`/v1/classify` answers `model_not_available` and the pipeline falls back to deterministic Detection Rules), OCR, graded security policy actions, operator auth/RBAC, and every threat/incident/alert domain table.
+Operator auth and the threat/alert/incident/detection-rule/policy/user/knowledge/dataset/training-job/model-evaluation domain tables all exist, with backend endpoints and a matching Control Panel page for each (`frontend/app/(panel)/`) — no mock data, every page is wired to a real endpoint.
+
+The threat classifier (`ml-service/app/models/classifier.py`, TF-IDF + LogisticRegression) is real: `/v1/train`, `/v1/evaluate`, `/v1/classify` all run genuine training/scoring against a checksum-verified artifact, and `app.pipeline.orchestrator` calls it as an additive risk signal — but only once an operator has explicitly promoted a model to `PRODUCTION` on the Models page (never automatic, per `07_Model_Registry_and_Deployment.md` §3-4). No real labeled corpus exists yet — `app.scripts.seed_dataset_samples` seeds a synthetic Indonesian dataset good enough to prove the pipeline, not production-grade accuracy.
+
+What does not exist yet: OCR, enforcement of security policies against live messages (CRUD/lifecycle exists; matching policies to messages is a separate follow-up — see `app.services.policies`), and operator RBAC (auth is email+password/bearer session only, every operator has equal access; roles are Phase 3).
 
 Feature scope (MVP / Post-MVP / Optional / Deferred) and per-feature implementation status live in `obsidian-docs/.../01_Overview/05_Product_Scope_and_Roadmap.md`. Sprint 1 completion notes, including what could not be verified and why, are in `obsidian-docs/.../06_Tasks/Task_Note/`.
 

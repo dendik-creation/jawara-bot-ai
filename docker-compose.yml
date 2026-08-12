@@ -5,7 +5,11 @@ services:
     container_name: jawara-waha
     restart: always
     ports:
-      - "${WAHA_PORT}:3000"
+      # 127.0.0.1, not 0.0.0.0: the dashboard (for QR-login setup) is a human
+      # admin tool, not a public endpoint — reach it over SSH port-forwarding,
+      # not the open internet. The webhook itself never needs a published
+      # port; api-gateway reaches WAHA over jawara-net.
+      - "127.0.0.1:${WAHA_PORT}:3000"
     environment:
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME}
       - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD}
@@ -31,7 +35,10 @@ services:
     container_name: jawara-gateway
     restart: always
     ports:
-      - "${API_GATEWAY_PORT}:8000"
+      # 127.0.0.1: public traffic comes in through `reverse-proxy` on the
+      # jawara-net Docker network, not this published port — that one stays
+      # for host-side debugging (curl from the VPS itself) only.
+      - "127.0.0.1:${API_GATEWAY_PORT}:8000"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - QDRANT_HOST=qdrant
@@ -54,6 +61,11 @@ services:
       - AUTH_BCRYPT_ROUNDS=${AUTH_BCRYPT_ROUNDS}
       - AUTH_LOGIN_MAX_ATTEMPTS=${AUTH_LOGIN_MAX_ATTEMPTS}
       - AUTH_LOGIN_WINDOW_SECONDS=${AUTH_LOGIN_WINDOW_SECONDS}
+      # Read by `app.scripts.create_operator` when run via `docker exec` during
+      # setup — not consumed by the API process itself.
+      - OPERATOR_EMAIL=${OPERATOR_EMAIL}
+      - OPERATOR_NAME=${OPERATOR_NAME}
+      - OPERATOR_PASSWORD=${OPERATOR_PASSWORD}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS}
       - LOG_MESSAGE_CONTENT=${LOG_MESSAGE_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL}
@@ -126,7 +138,9 @@ services:
     container_name: jawara-ml
     restart: always
     ports:
-      - "${ML_SERVICE_PORT}:9000"
+      # 127.0.0.1: internal service-to-service traffic goes over jawara-net;
+      # this is host-side debugging access only, never public.
+      - "127.0.0.1:${ML_SERVICE_PORT}:9000"
     environment:
       - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY}
       - QDRANT_HOST=qdrant
@@ -137,8 +151,16 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER}
       - LLM_MODEL=${LLM_MODEL}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL}
+      - MODEL_ARTIFACT_DIR=/app/model_artifacts
+    volumes:
+      # Trained classifier artifacts — must survive a container rebuild, since
+      # the model registry (Postgres, owned by the gateway) tracks a checksum
+      # against a specific file that has to still be there.
+      - ml_model_artifacts:/app/model_artifacts
     depends_on:
       qdrant:
         condition: service_healthy
@@ -168,7 +190,10 @@ services:
     container_name: jawara-postgres
     restart: always
     ports:
-      - "${POSTGRES_PORT}:5432"
+      # 127.0.0.1: never publish a database port to the open internet. Kept
+      # published (not dropped) for the hybrid-local-dev workflow in
+      # README.md, where a backend run outside Docker connects here directly.
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
@@ -189,7 +214,8 @@ services:
     container_name: jawara-qdrant
     restart: always
     ports:
-      - "${QDRANT_PORT}:6333"
+      # 127.0.0.1: Qdrant has no auth of its own in this stack — never public.
+      - "127.0.0.1:${QDRANT_PORT}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
@@ -209,7 +235,10 @@ services:
     container_name: jawara-redis
     restart: always
     ports:
-      - "${REDIS_PORT}:6379"
+      # 127.0.0.1: Redis in this stack has no password (no auth mechanism
+      # exists in the codebase at all) — an internet-facing 6379 is an open
+      # door to the Celery broker, rate limiter, and threat-intel cache.
+      - "127.0.0.1:${REDIS_PORT}:6379"
     networks:
       - jawara-net
     healthcheck:
@@ -230,7 +259,8 @@ services:
     container_name: jawara-dashboard
     restart: always
     ports:
-      - "${FRONTEND_PORT}:3000"
+      # 127.0.0.1: public traffic comes in through `reverse-proxy`.
+      - "127.0.0.1:${FRONTEND_PORT}:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     depends_on:
@@ -253,3 +283,4 @@ volumes:
   waha_sessions:
   postgres_data:
   qdrant_data:
+  ml_model_artifacts:

@@ -18,6 +18,9 @@ from app.services.auth import AuthUnavailableError, Operator
 
 client = TestClient(app)
 
+# Fixture value only — never a credential used outside this test module.
+TEST_PASSWORD = "unit-test-fixture-pw-not-real"  # noqa: S105  pragma: allowlist secret
+
 OPERATOR = Operator(
     id="11111111-1111-1111-1111-111111111111",
     email="ops@example.com",
@@ -51,11 +54,11 @@ def no_login_rate_limit(monkeypatch):
 
 
 def test_password_round_trips():
-    stored = passwords.hash_password("gemastik-2026", rounds=4)
+    stored = passwords.hash_password(TEST_PASSWORD, rounds=4)
 
-    assert stored != "gemastik-2026"
-    assert passwords.verify_password("gemastik-2026", stored)
-    assert not passwords.verify_password("gemastik-2027", stored)
+    assert stored != TEST_PASSWORD
+    assert passwords.verify_password(TEST_PASSWORD, stored)
+    assert not passwords.verify_password(TEST_PASSWORD + "-wrong", stored)
 
 
 def test_same_password_hashes_differently_each_time():
@@ -164,7 +167,7 @@ def test_login_returns_a_token_and_the_operator(monkeypatch):
     monkeypatch.setattr("app.services.auth.create_session", AsyncMock(return_value=("tok-123", expires)))
 
     body = client.post(
-        "/api/v1/auth/login", json={"email": "ops@example.com", "password": "gemastik-2026"}
+        "/api/v1/auth/login", json={"email": "ops@example.com", "password": TEST_PASSWORD}
     ).json()
 
     assert body["access_token"] == "tok-123"
@@ -196,7 +199,7 @@ def test_login_is_rate_limited(monkeypatch):
     monkeypatch.setattr("app.services.auth.authenticate", authenticate)
 
     response = client.post(
-        "/api/v1/auth/login", json={"email": "ops@example.com", "password": "gemastik-2026"}
+        "/api/v1/auth/login", json={"email": "ops@example.com", "password": TEST_PASSWORD}
     )
 
     assert response.status_code == 429
@@ -212,7 +215,7 @@ def test_login_reports_503_when_the_account_store_is_down(monkeypatch):
     )
 
     response = client.post(
-        "/api/v1/auth/login", json={"email": "ops@example.com", "password": "gemastik-2026"}
+        "/api/v1/auth/login", json={"email": "ops@example.com", "password": TEST_PASSWORD}
     )
 
     assert response.status_code == 503

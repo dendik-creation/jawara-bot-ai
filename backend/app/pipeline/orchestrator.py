@@ -32,6 +32,7 @@ from app.pipeline.url_extractor import extract_urls
 from app.pipeline.url_safety import UrlScanResult, scan_urls
 from app.schemas.queue import MessageJob
 from app.services.message_log import MessageLogEntry, chat_type_for, record_message
+from app.services.model_versions import get_production_model
 
 logger = logging.getLogger("app.pipeline.orchestrator")
 
@@ -60,6 +61,39 @@ VERDICT_RISK: dict[str, RiskLevel] = {
     Verdict.FACT.value: RiskLevel.LOW,
 }
 
+# The ML classifier's own view of risk per predicted category. Additive only —
+# folded into `risk_signals` alongside the rules engine's own signal, and
+# `worst_risk()` takes the max, so this can only ever push risk up, never
+# suppress a HIGH the rules engine already found. `NOT_A_THREAT` (a real
+# negative class the DB-locked `Category` enum can't represent — see
+# `app.services.datasets`) contributes no elevated risk.
+CATEGORY_RISK: dict[str, RiskLevel] = {
+    Category.HEALTH_HOAX.value: RiskLevel.MEDIUM,
+    Category.FINANCIAL_FRAUD.value: RiskLevel.HIGH,
+    Category.GENERAL_NEWS.value: RiskLevel.LOW,
+    Category.PHISHING_LINK.value: RiskLevel.HIGH,
+    Category.FILE_APK.value: RiskLevel.HIGH,
+    "NOT_A_THREAT": RiskLevel.LOW,
+}
+
+# In-process cache for "which model_version is PRODUCTION" — promotion is a
+# rare, explicit human action (07_Model_Registry_and_Deployment §3-4), so a
+# DB round-trip per message is pure waste. Short TTL, not a long one: a
+# rollback/promotion should take effect for new messages within seconds, not
+# ride out a full worker restart.
+_PRODUCTION_MODEL_CACHE_TTL_SECONDS = 30.0
+_production_model_cache: dict[str, Any] = {"value": None, "checked_at": 0.0}
+
+
+async def _cached_production_model(settings: Settings) -> dict[str, str] | None:
+    now = time.monotonic()
+    if now - _production_model_cache["checked_at"] < _PRODUCTION_MODEL_CACHE_TTL_SECONDS:
+        return _production_model_cache["value"]
+    value = await get_production_model(settings)
+    _production_model_cache["value"] = value
+    _production_model_cache["checked_at"] = now
+    return value
+
 
 @dataclass
 class PipelineOutcome:
@@ -74,6 +108,8 @@ class PipelineOutcome:
     match_count: int = 0
     similarity_score: float | None = None
     matched_fact_id: str | None = None
+    ml_category: str | None = None
+    ml_confidence: float | None = None
     response_dispatched: bool = False
     response_latency_ms: int | None = None
     logged: bool = False
@@ -89,6 +125,8 @@ class PipelineOutcome:
             "url_count": self.url_count,
             "match_count": self.match_count,
             "similarity_score": self.similarity_score,
+            "ml_category": self.ml_category,
+            "ml_confidence": self.ml_confidence,
             "response_dispatched": self.response_dispatched,
             "response_latency_ms": self.response_latency_ms,
             "logged": self.logged,
@@ -224,6 +262,29 @@ async def process_message_job(
     risk_signals: list[RiskLevel] = []
 
     try:
+        # --- stage 5c: ML classification (additive, independent of the
+        # rules engine that fired above) -----------------------------------
+        # Inert until an operator explicitly promotes a model
+        # (07_Model_Registry_and_Deployment §3-4) — `production_model` is
+        # `None` for every message until that happens, so this is a no-op by
+        # default rather than a behaviour change on deploy.
+        production_model = await _cached_production_model(settings)
+        if production_model and normalized.text.strip():
+            try:
+                ml_classification = await ml.classify(
+                    request_id,
+                    normalized.text,
+                    production_model["model_version"],
+                    production_model["artifact_sha256"],
+                )
+                predicted_category = str(ml_classification.result.get("category") or "")
+                outcome.ml_category = predicted_category or None
+                outcome.ml_confidence = ml_classification.confidence
+                if predicted_category in CATEGORY_RISK:
+                    risk_signals.append(CATEGORY_RISK[predicted_category])
+            except MlServiceError as exc:
+                outcome.degradations.append(f"ml_classify_unavailable:{exc.error_code}")
+
         # --- stage 5b/6: verification ------------------------------------
         if intent.engine == intent_router.ENGINE_URL_SAFETY and urls:
             url_scan = await scan_urls(urls, redis=redis, settings=settings)

@@ -5,6 +5,10 @@ Usage:
     python -m app.scripts.create_operator --email ops@example.com --name "Nama Operator"
     python -m app.scripts.create_operator --email ops@example.com --name "Nama" --reset-password
 
+    # Non-interactive (setup scripts, docker exec): --email/--name fall back to
+    # OPERATOR_EMAIL/OPERATOR_NAME, password to OPERATOR_PASSWORD.
+    python -m app.scripts.create_operator
+
 The password is read from stdin (prompted, not echoed) or from the
 `OPERATOR_PASSWORD` environment variable for non-interactive provisioning. It is
 never a command-line argument: argv lands in shell history and in `ps` output on
@@ -57,10 +61,12 @@ async def run(email: str, name: str, password: str, reset: bool) -> int:
     try:
         operator = await auth.create_operator(email, name, password, settings)
     except ValueError as error:
-        # Existing account is a normal outcome of re-running provisioning, not a
-        # crash — but it must not silently overwrite the password either.
-        logger.error("%s (use --reset-password to change it)", error)
-        return 1
+        # Existing account is a normal outcome of re-running provisioning — the
+        # setup step that calls this on every deploy must not fail because the
+        # operator was already created last time. It must not silently
+        # overwrite the password either, hence still no reset here.
+        logger.info("%s (use --reset-password to change it)", error)
+        return 0
 
     logger.info("operator created", extra={"operator_id": operator.id, "email": operator.email})
     return 0
@@ -68,8 +74,10 @@ async def run(email: str, name: str, password: str, reset: bool) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create or update a Control Panel operator")
-    parser.add_argument("--email", required=True)
-    parser.add_argument("--name", default="", help="display name; required when creating")
+    parser.add_argument("--email", default=os.environ.get("OPERATOR_EMAIL", ""))
+    parser.add_argument(
+        "--name", default=os.environ.get("OPERATOR_NAME", ""), help="display name; required when creating"
+    )
     parser.add_argument(
         "--reset-password",
         action="store_true",
@@ -79,8 +87,10 @@ def main() -> None:
 
     configure_logging(get_settings().log_level)
 
+    if not args.email.strip():
+        raise SystemExit("--email is required (or set OPERATOR_EMAIL)")
     if not args.reset_password and not args.name.strip():
-        raise SystemExit("--name is required when creating an operator")
+        raise SystemExit("--name is required when creating an operator (or set OPERATOR_NAME)")
 
     password = read_password()
     if len(password) < MIN_PASSWORD_LENGTH:

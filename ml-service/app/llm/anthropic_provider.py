@@ -11,8 +11,8 @@ product:
 2. Indonesian fluency at the polite, non-technical register the persona needs.
 3. Latency and cost inside the <3.0s end-to-end budget for a per-message call.
 
-The contract stays provider-agnostic: switching to `LLM_PROVIDER=openai` is a
-config change, and nothing outside this package knows which vendor answered.
+The contract stays provider-agnostic: switching to `LLM_PROVIDER=openai_compatible`
+is a config change, and nothing outside this package knows which vendor answered.
 """
 
 import httpx

@@ -1,8 +1,11 @@
-"""OpenAI Chat Completions provider — the documented alternative.
+"""OpenAI-compatible Chat Completions provider.
 
-Kept implemented, not just mentioned, so the "provider-agnostic contract" claim
-in `04_ML_Service.md` §4 is demonstrable: `LLM_PROVIDER=openai` swaps the vendor
-with no change above this package.
+Not "OpenAI the vendor" specifically — any endpoint that speaks the same
+`POST {base_url}/chat/completions` wire format (official OpenAI, OpenRouter,
+Groq, a self-hosted vLLM/Ollama, ...). `LLM_BASE_URL`/`LLM_API_KEY`/
+`LLM_MODEL` name exactly which one, kept separate from the embedding
+provider's own `OPENAI_API_KEY`/`OPENAI_BASE_URL` — unrelated services that
+happen to share a vendor name.
 """
 
 import httpx
@@ -13,16 +16,16 @@ from app.llm.base import LlmProvider
 from app.llm.prompt import GenerationRequest, build_user_message, load_system_prompt
 
 
-class OpenAIChatProvider(LlmProvider):
-    name = "openai"
+class OpenAICompatibleProvider(LlmProvider):
+    name = "openai_compatible"
 
     def __init__(self, settings: Settings) -> None:
-        self.version = settings.openai_chat_model
+        self.version = settings.llm_model
         self._settings = settings
 
     async def generate(self, request: GenerationRequest) -> str:
         body = {
-            "model": self._settings.openai_chat_model,
+            "model": self._settings.llm_model,
             "max_tokens": self._settings.llm_max_tokens,
             "temperature": self._settings.llm_temperature,
             "messages": [
@@ -34,8 +37,8 @@ class OpenAIChatProvider(LlmProvider):
         try:
             async with httpx.AsyncClient(timeout=self._settings.llm_timeout_seconds) as client:
                 response = await client.post(
-                    f"{self._settings.openai_base_url.rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {self._settings.openai_api_key}"},
+                    f"{self._settings.llm_base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {self._settings.llm_api_key}"},
                     json=body,
                 )
         except httpx.TimeoutException as exc:

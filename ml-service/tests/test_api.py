@@ -1,10 +1,12 @@
 """`/v1` endpoint contract: envelope, auth, structured errors, repair path."""
 
+import hashlib
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.v1.endpoints import inference as inference_endpoints
 from app.core.config import get_settings
 from app.llm.base import LlmProvider
 from app.main import app
@@ -221,8 +223,152 @@ def test_empty_user_text_is_rejected(client):
 
 
 # --------------------------------------------------------------------------
-# Classification (no trained model yet)
+# Classification: train, evaluate, classify
 # --------------------------------------------------------------------------
+
+TRAIN_SAMPLES = [
+    {"text": "Air rebusan daun kitolod sembuhkan katarak tanpa operasi", "label": "HEALTH_HOAX"},
+    {"text": "Obat herbal ampuh sembuhkan kanker tanpa efek samping", "label": "HEALTH_HOAX"},
+    {"text": "Jahe merah terbukti sembuhkan diabetes permanen", "label": "HEALTH_HOAX"},
+    {"text": "Selamat anda menang hadiah 100 juta transfer biaya admin dulu", "label": "FINANCIAL_FRAUD"},
+    {"text": "Rekening anda diblokir kirim kode OTP sekarang", "label": "FINANCIAL_FRAUD"},
+    {"text": "Anda menang undian segera transfer biaya pajak hadiah", "label": "FINANCIAL_FRAUD"},
+    {"text": "Oke nanti malam jadi ketemuan jam 7 ya", "label": "NOT_A_THREAT"},
+    {"text": "Makasih infonya, aku otw ke kantor", "label": "NOT_A_THREAT"},
+    {"text": "Besok libur, jangan lupa bawa laptop buat presentasi", "label": "NOT_A_THREAT"},
+]
+
+EVAL_SAMPLES = [
+    {"text": "Minyak kutus kutus ampuh sembuhkan stroke tanpa efek samping", "label": "HEALTH_HOAX"},
+    {"text": "Kartu ATM anda akan diblokir, balas dengan PIN untuk verifikasi", "label": "FINANCIAL_FRAUD"},
+    {"text": "Udah sampai rumah, kamu udah makan belum", "label": "NOT_A_THREAT"},
+]
+
+
+@pytest.fixture
+def isolated_classifier(tmp_path, monkeypatch):
+    """Artifacts land in a throwaway directory, and each test starts with an
+    empty in-memory cache — the registry singleton is shared across the whole
+    test module, so a leaked path or a leaked cached model would bleed into
+    unrelated tests.
+    """
+    monkeypatch.setattr(registry, "_artifact_dir", tmp_path)
+    monkeypatch.setattr(registry, "_classifiers", {})
+    monkeypatch.setattr(inference_endpoints, "_artifact_path", lambda model_version: tmp_path / f"{model_version}.joblib")
+    return tmp_path
+
+
+def _train(client, samples=TRAIN_SAMPLES) -> dict[str, Any]:
+    return client.post(
+        "/v1/train",
+        json=envelope({"dataset": {"id": "ds-1", "name": "train", "version": 1, "samples": samples}, "base_model": "tfidf-logreg", "config": {}}),
+        headers=HEADERS,
+    ).json()
+
+
+def test_train_produces_a_real_artifact_with_a_verifiable_checksum(client, isolated_classifier):
+    body = _train(client)
+
+    assert body["result"]["train_metrics"]["accuracy"] > 0
+    assert body["result"]["label_counts"] == {"HEALTH_HOAX": 3, "FINANCIAL_FRAUD": 3, "NOT_A_THREAT": 3}
+    model_version = body["model_version"]
+    artifact_path = isolated_classifier / f"{model_version}.joblib"
+    assert artifact_path.exists()
+    assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == body["result"]["artifact_sha256"]
+
+
+def test_train_rejects_an_empty_sample_list(client, isolated_classifier):
+    body = client.post(
+        "/v1/train",
+        json=envelope({"dataset": {"samples": []}, "base_model": "tfidf-logreg", "config": {}}),
+        headers=HEADERS,
+    ).json()
+
+    assert body["error_code"] == "invalid_payload"
+
+
+def test_evaluate_scores_a_trained_model_against_held_out_samples(client, isolated_classifier):
+    trained = _train(client)
+
+    body = client.post(
+        "/v1/evaluate",
+        json=envelope(
+            {
+                "model_version": trained["model_version"],
+                "expected_sha256": trained["result"]["artifact_sha256"],
+                "dataset": {"id": "ds-2", "name": "eval", "version": 1, "samples": EVAL_SAMPLES},
+            }
+        ),
+        headers=HEADERS,
+    ).json()
+
+    assert body["model_version"] == trained["model_version"]
+    assert 0.0 <= body["result"]["accuracy"] <= 1.0
+    assert body["result"]["sample_count"] == len(EVAL_SAMPLES)
+    assert body["confidence"] == body["result"]["accuracy"]
+
+
+def test_evaluate_rejects_a_checksum_that_does_not_match_the_artifact(client, isolated_classifier):
+    trained = _train(client)
+
+    response = client.post(
+        "/v1/evaluate",
+        json=envelope(
+            {
+                "model_version": trained["model_version"],
+                "expected_sha256": "0" * 64,
+                "dataset": {"samples": EVAL_SAMPLES},
+            }
+        ),
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "artifact_integrity_failed"
+
+
+def test_evaluate_rejects_an_unknown_model_version(client, isolated_classifier):
+    response = client.post(
+        "/v1/evaluate",
+        json=envelope({"model_version": "clf-does-not-exist", "expected_sha256": "a" * 64, "dataset": {"samples": EVAL_SAMPLES}}),
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "model_not_available"
+
+
+def test_classify_predicts_with_a_trained_and_verified_model(client, isolated_classifier):
+    trained = _train(client)
+
+    body = client.post(
+        "/v1/classify",
+        json=envelope(
+            {
+                "text": "Anda terpilih menang hadiah, segera transfer biaya admin",
+                "model_version": trained["model_version"],
+                "expected_sha256": trained["result"]["artifact_sha256"],
+            }
+        ),
+        headers=HEADERS,
+    ).json()
+
+    assert body["result"]["category"] in {"HEALTH_HOAX", "FINANCIAL_FRAUD", "NOT_A_THREAT"}
+    assert body["confidence"] == body["result"]["probabilities"][body["result"]["category"]]
+    assert body["model_version"] == trained["model_version"]
+
+
+def test_classify_rejects_a_checksum_that_does_not_match_the_artifact(client, isolated_classifier):
+    trained = _train(client)
+
+    response = client.post(
+        "/v1/classify",
+        json=envelope({"text": "halo", "model_version": trained["model_version"], "expected_sha256": "0" * 64}),
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "artifact_integrity_failed"
 
 
 def test_classify_reports_model_not_available_rather_than_faking_a_verdict(client):
@@ -231,6 +377,14 @@ def test_classify_reports_model_not_available_rather_than_faking_a_verdict(clien
     assert response.status_code == 503
     assert response.json()["error_code"] == "model_not_available"
     assert response.json()["retryable"] is False
+
+
+def test_classify_rejects_empty_text(client):
+    body = client.post(
+        "/v1/classify", json=envelope({"text": "  ", "model_version": "clf-x", "expected_sha256": "a" * 64}), headers=HEADERS
+    ).json()
+
+    assert body["error_code"] == "invalid_payload"
 
 
 # --------------------------------------------------------------------------

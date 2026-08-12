@@ -46,7 +46,7 @@ no GPU, and no internet:
 | Config | Default | Alternatives |
 |---|---|---|
 | `EMBEDDING_PROVIDER` | `hash` — deterministic, **lexical not semantic** | `openai` (`text-embedding-3-small`) |
-| `LLM_PROVIDER` | `template` — deterministic composer | `anthropic` (chosen for production), `openai` |
+| `LLM_PROVIDER` | `template` — deterministic composer | `anthropic` (chosen for production), `openai_compatible` (any Chat Completions-shaped API — see `LLM_BASE_URL`/`LLM_API_KEY`) |
 
 A provider configured without its key does not crash startup: it falls back,
 records why in `degraded_reasons`, and stays ready. A pipeline that cannot answer

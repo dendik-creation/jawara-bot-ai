@@ -83,7 +83,7 @@ async def test_structured_error_is_parsed_including_retryable(monkeypatch):
     )
 
     with pytest.raises(MlServiceError) as excinfo:
-        await MlClient(ml_settings()).classify(REQUEST_ID, "halo")
+        await MlClient(ml_settings()).classify(REQUEST_ID, "halo", "clf-test", "deadbeef")
 
     assert excinfo.value.error_code == "model_not_available"
     assert excinfo.value.retryable is False
@@ -93,7 +93,7 @@ async def test_non_structured_5xx_is_treated_as_retryable(monkeypatch):
     patch_httpx(monkeypatch, "app.clients.ml_client", lambda **_: FakeResponse(502, text="bad gateway"))
 
     with pytest.raises(MlServiceError) as excinfo:
-        await MlClient(ml_settings()).classify(REQUEST_ID, "halo")
+        await MlClient(ml_settings()).classify(REQUEST_ID, "halo", "clf-test", "deadbeef")
 
     assert excinfo.value.retryable is True
 
@@ -102,7 +102,7 @@ async def test_disabled_ml_service_fails_fast_without_a_request(monkeypatch):
     calls = patch_httpx(monkeypatch, "app.clients.ml_client", lambda **_: ok({}))
 
     with pytest.raises(MlServiceError) as excinfo:
-        await MlClient(ml_settings(ml_enabled=False)).classify(REQUEST_ID, "halo")
+        await MlClient(ml_settings(ml_enabled=False)).classify(REQUEST_ID, "halo", "clf-test", "deadbeef")
 
     assert excinfo.value.error_code == "ml_disabled"
     assert calls == []

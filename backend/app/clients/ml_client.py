@@ -126,8 +126,19 @@ class MlClient:
         )
         raise last_error
 
-    async def classify(self, request_id: str, text: str) -> MlResponse:
-        return await self._post("classify", request_id, {"text": text})
+    async def classify(self, request_id: str, text: str, model_version: str, expected_sha256: str) -> MlResponse:
+        """Threat classification against a specific, checksum-verified model.
+
+        ml-service has no registry of its own — `model_version`/
+        `expected_sha256` name exactly which artifact to trust, sourced from
+        `app.services.model_versions.get_production_model`. Called with an
+        empty `model_version` (no production model promoted yet), ml-service
+        answers `model_not_available` — the same shape as any other
+        unavailable-model failure, so callers don't need a special case.
+        """
+        return await self._post(
+            "classify", request_id, {"text": text, "model_version": model_version, "expected_sha256": expected_sha256}
+        )
 
     async def embed(self, request_id: str, texts: list[str]) -> MlResponse:
         return await self._post("embed", request_id, {"texts": texts})
@@ -191,11 +202,12 @@ class MlClient:
     ) -> MlResponse:
         """Kick off a training run (05_Training_Jobs.md).
 
-        `/v1/train` doesn't exist in ml-service yet — this call is expected
-        to raise `MlServiceError` today, and the caller (a Celery task) is
-        expected to record that as a real, honest job failure rather than
-        pretend training happened. Not idempotent — training must never be
-        retried blindly (same reasoning as `generate`).
+        `dataset_ref` must include a `samples` key (`[{"text","label"}, ...]`)
+        — ml-service has no database of its own, so the caller (a Celery task,
+        via `app.services.training_jobs.execute_training_job`) fetches the
+        dataset's rows and ships them inline rather than a reference
+        ml-service could look up itself. Not idempotent — training must never
+        be retried blindly (same reasoning as `generate`).
         """
         return await self._post(
             "train", request_id, {"dataset": dataset_ref, "base_model": base_model, "config": config}
@@ -205,17 +217,21 @@ class MlClient:
         self,
         request_id: str,
         model_version: str,
+        expected_sha256: str,
         dataset_ref: dict[str, Any],
     ) -> MlResponse:
         """Score a trained model against a fixed eval dataset (06_Model_Evaluation.md).
 
-        `/v1/evaluate` doesn't exist in ml-service yet — this call is expected
-        to raise `MlServiceError` today, and the caller (a Celery task) is
-        expected to record that as a real, honest evaluation failure rather
-        than fabricate metrics. Not idempotent — same reasoning as `train`.
+        `dataset_ref` must include a `samples` key, same reasoning as `train`.
+        `expected_sha256` is the training job's own recorded checksum
+        (`training_jobs.metrics->>'artifact_sha256'`) — ml-service refuses to
+        load an artifact it can't verify against it. Not idempotent — same
+        reasoning as `train`.
         """
         return await self._post(
-            "evaluate", request_id, {"model_version": model_version, "dataset": dataset_ref}
+            "evaluate",
+            request_id,
+            {"model_version": model_version, "expected_sha256": expected_sha256, "dataset": dataset_ref},
         )
 
     async def ready(self) -> tuple[bool, dict[str, Any]]:

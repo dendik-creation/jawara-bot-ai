@@ -42,6 +42,9 @@ obsidian-docs/**/.obsidian/cache
 .env.*
 !.env.example
 
+# === Backups (scripts/backup.sh) — full DB dumps, never committed ===
+backups/
+
 # === OS ===
 .DS_Store
 Thumbs.db

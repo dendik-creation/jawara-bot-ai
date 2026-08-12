@@ -1,4 +1,4 @@
-"""Inference endpoints: embed, rag-query, generate, classify.
+"""Inference endpoints: embed, rag-query, generate, train, evaluate, classify.
 
 Every response carries `model_version` — the audit trail has to be able to name
 which model decided something, and "the model we happened to be running that
@@ -6,6 +6,9 @@ week" is not an answer.
 """
 
 import logging
+import uuid
+from collections import Counter
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
@@ -16,6 +19,7 @@ from app.core.security import verify_internal_key
 from app.llm.prompt import GenerationRequest
 from app.llm.template_provider import TemplateProvider
 from app.llm.validator import validate_response
+from app.models import classifier as classifier_module
 from app.models.registry import registry
 from app.rag.qdrant_repo import QdrantRepository
 from app.schemas.contract import MlRequest, MlResponse
@@ -23,6 +27,34 @@ from app.schemas.contract import MlRequest, MlResponse
 logger = logging.getLogger("app.api.inference")
 
 router = APIRouter(dependencies=[Depends(verify_internal_key)])
+
+
+def _parse_samples(dataset_payload: dict) -> list[tuple[str, str]]:
+    raw_samples = dataset_payload.get("samples") or []
+    if not isinstance(raw_samples, list) or not raw_samples:
+        raise MlError("invalid_payload", "payload.dataset.samples must be a non-empty list", retryable=False)
+    try:
+        return [(str(item["text"]), str(item["label"])) for item in raw_samples]
+    except (KeyError, TypeError) as exc:
+        raise MlError("invalid_payload", "each sample needs 'text' and 'label'", retryable=False) from exc
+
+
+def _artifact_path(model_version: str) -> Path:
+    return Path(get_settings().model_artifact_dir) / f"{model_version}.joblib"
+
+
+def _load_classifier(model_version: str, expected_sha256: str) -> classifier_module.TrainedClassifier:
+    try:
+        return registry.classifier(model_version, expected_sha256)
+    except FileNotFoundError as exc:
+        raise MlError(
+            "model_not_available",
+            f"no classifier artifact for version {model_version}",
+            status_code=503,
+            retryable=False,
+        ) from exc
+    except classifier_module.ArtifactIntegrityError as exc:
+        raise MlError("artifact_integrity_failed", str(exc), status_code=409, retryable=False) from exc
 
 
 @router.post("/embed", response_model=MlResponse)
@@ -167,20 +199,98 @@ async def generate(request: MlRequest) -> MlResponse:
     )
 
 
+@router.post("/train", response_model=MlResponse)
+async def train_model(request: MlRequest) -> MlResponse:
+    """Fit a fresh classifier from the samples the gateway sends inline.
+
+    ml-service has no database of its own (the backend/ml-service split in
+    02_Architecture/04_ML_Service.md) — the caller ships the dataset's rows in
+    the request body rather than a reference this service could look up
+    itself. The result is a CANDIDATE artifact only: nothing here promotes it
+    to production (07_Model_Registry_and_Deployment §3-4) — that is a separate,
+    explicit, human action recorded by the gateway.
+    """
+    dataset = request.payload.get("dataset") or {}
+    samples = _parse_samples(dataset)
+
+    model_version = f"clf-{uuid.uuid4().hex[:12]}"
+    with Timer() as timer:
+        model = classifier_module.train(samples)
+        artifact_sha256 = classifier_module.save(model, _artifact_path(model_version))
+        registry.register_classifier(model_version, artifact_sha256, model)
+        train_metrics = model.evaluate(samples)
+
+    return envelope(
+        request.request_id,
+        {
+            "train_metrics": train_metrics,
+            "artifact_sha256": artifact_sha256,
+            "label_counts": dict(Counter(label for _, label in samples)),
+        },
+        model_version,
+        timer.elapsed_ms,
+    )
+
+
+@router.post("/evaluate", response_model=MlResponse)
+async def evaluate_model(request: MlRequest) -> MlResponse:
+    """Score a trained model against a fixed, held-out eval dataset.
+
+    `model_version`/`expected_sha256` are required in the payload for the same
+    reason `/classify` needs them: ml-service has no registry of its own to
+    consult, so the gateway states up front which artifact it trusts.
+    """
+    model_version = str(request.payload.get("model_version") or "")
+    expected_sha256 = str(request.payload.get("expected_sha256") or "")
+    if not model_version or not expected_sha256:
+        raise MlError(
+            "invalid_payload", "payload.model_version and payload.expected_sha256 are required", retryable=False
+        )
+
+    dataset = request.payload.get("dataset") or {}
+    samples = _parse_samples(dataset)
+
+    with Timer() as timer:
+        model = _load_classifier(model_version, expected_sha256)
+        metrics = model.evaluate(samples)
+
+    return envelope(request.request_id, metrics, model_version, timer.elapsed_ms, confidence=metrics.get("accuracy"))
+
+
 @router.post("/classify", response_model=MlResponse)
 async def classify(request: MlRequest) -> MlResponse:
-    """Threat classification — no trained model exists yet.
+    """Threat classification against a specific, checksum-verified model.
 
-    The endpoint is part of the published contract, so it answers with the
-    structured error the gateway knows how to branch on rather than a 404. The
-    gateway's documented behaviour on this error is to fall through to the
-    deterministic Detection Rules path and mark the result `ml_unavailable`
-    (02_Data_Pipeline §6). Training the first classifier is Phase 4 work
-    ([[05_Training_Jobs]]).
+    The gateway is the one that knows which version is currently PRODUCTION
+    (07_Model_Registry_and_Deployment.md) — this endpoint has no notion of
+    "the" model, only "a" model it's told to use. Called without a
+    `model_version` (no production model promoted yet), it answers with the
+    same structured error the stub used to: the gateway's documented behaviour
+    on this error is to fall through to the deterministic Detection Rules path
+    and mark the result `ml_unavailable` (02_Data_Pipeline §6).
     """
-    raise MlError(
-        "model_not_available",
-        "no threat classification model has been trained and promoted yet",
-        status_code=503,
-        retryable=False,
+    text = str(request.payload.get("text") or "").strip()
+    if not text:
+        raise MlError("invalid_payload", "payload.text must be a non-empty string", retryable=False)
+
+    model_version = str(request.payload.get("model_version") or "")
+    expected_sha256 = str(request.payload.get("expected_sha256") or "")
+    if not model_version or not expected_sha256:
+        raise MlError(
+            "model_not_available",
+            "no threat classification model has been trained and promoted yet",
+            status_code=503,
+            retryable=False,
+        )
+
+    with Timer() as timer:
+        model = _load_classifier(model_version, expected_sha256)
+        label, probabilities = model.predict(text)
+
+    return envelope(
+        request.request_id,
+        {"category": label, "probabilities": probabilities},
+        model_version,
+        timer.elapsed_ms,
+        confidence=probabilities[label],
     )

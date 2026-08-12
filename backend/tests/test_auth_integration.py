@@ -17,6 +17,9 @@ from app.services import auth
 
 pytestmark = pytest.mark.integration
 
+# Fixture value only — never a credential used outside this test module.
+TEST_PASSWORD = "unit-test-fixture-pw-not-real"  # noqa: S105  pragma: allowlist secret
+
 
 def _cheap_settings(dsn: str) -> Settings:
     """Real settings, minimum bcrypt cost.
@@ -43,7 +46,7 @@ async def store(postgres_dsn):
         await conn.close()
 
 
-async def _new_operator(store, password: str = "gemastik-2026", active: bool = True):
+async def _new_operator(store, password: str = TEST_PASSWORD, active: bool = True):
     settings, created = store
     email = f"pytest-{uuid.uuid4().hex[:12]}@example.test"
     operator = await auth.create_operator(email, "Pytest Operator", password, settings)
@@ -62,7 +65,7 @@ async def test_login_then_resolve_then_logout(store):
     settings, _ = store
     operator = await _new_operator(store)
 
-    authenticated = await auth.authenticate(operator.email, "gemastik-2026", settings)
+    authenticated = await auth.authenticate(operator.email, TEST_PASSWORD, settings)
     assert authenticated is not None
 
     token, expires_at = await auth.create_session(authenticated, settings)
@@ -135,7 +138,7 @@ async def test_disabled_account_cannot_authenticate(store):
     settings, _ = store
     operator = await _new_operator(store, active=False)
 
-    assert await auth.authenticate(operator.email, "gemastik-2026", settings) is None
+    assert await auth.authenticate(operator.email, TEST_PASSWORD, settings) is None
 
 
 async def test_email_uniqueness_ignores_case(store):
@@ -150,7 +153,7 @@ async def test_login_accepts_the_email_in_any_case(store):
     settings, _ = store
     operator = await _new_operator(store)
 
-    assert await auth.authenticate(operator.email.upper(), "gemastik-2026", settings) is not None
+    assert await auth.authenticate(operator.email.upper(), TEST_PASSWORD, settings) is not None
 
 
 async def test_unknown_email_and_wrong_password_are_both_none(store):
@@ -158,7 +161,7 @@ async def test_unknown_email_and_wrong_password_are_both_none(store):
     operator = await _new_operator(store)
 
     assert await auth.authenticate(operator.email, "wrong-password", settings) is None
-    assert await auth.authenticate("nobody@example.test", "gemastik-2026", settings) is None
+    assert await auth.authenticate("nobody@example.test", TEST_PASSWORD, settings) is None
 
 
 async def test_password_reset_invalidates_the_old_password(store):
@@ -166,7 +169,7 @@ async def test_password_reset_invalidates_the_old_password(store):
     operator = await _new_operator(store)
 
     assert await auth.set_password(operator.email, "a-brand-new-password", settings) is True
-    assert await auth.authenticate(operator.email, "gemastik-2026", settings) is None
+    assert await auth.authenticate(operator.email, TEST_PASSWORD, settings) is None
     assert await auth.authenticate(operator.email, "a-brand-new-password", settings) is not None
 
 
@@ -196,6 +199,6 @@ async def test_login_records_last_login_at(store):
     assert operator.last_login_at is None
 
     await auth.create_session(operator, settings)
-    refreshed = await auth.authenticate(operator.email, "gemastik-2026", settings)
+    refreshed = await auth.authenticate(operator.email, TEST_PASSWORD, settings)
 
     assert refreshed is not None and refreshed.last_login_at is not None

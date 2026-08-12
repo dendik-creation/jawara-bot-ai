@@ -44,19 +44,39 @@ def job(text: str = HOAX_TEXT, **payload_overrides) -> MessageJob:
 
 
 class FakeMlClient:
-    def __init__(self, matches=None, rag_error=None, generate_error=None, message="reply"):
+    def __init__(
+        self,
+        matches=None,
+        rag_error=None,
+        generate_error=None,
+        message="reply",
+        classify_result=None,
+        classify_error=None,
+    ):
         self._matches = matches or []
         self._rag_error = rag_error
         self._generate_error = generate_error
         self._message = message
+        self._classify_result = classify_result
+        self._classify_error = classify_error
         self.generate_calls: list[dict] = []
         self.rag_calls: list[str] = []
+        self.classify_calls: list[dict] = []
 
     async def rag_query(self, request_id, query, category=None, **_):
         self.rag_calls.append(query)
         if self._rag_error:
             raise self._rag_error
         return MlResponse(request_id, {"matches": self._matches}, "hash-embed-v0")
+
+    async def classify(self, request_id, text, model_version, expected_sha256):
+        self.classify_calls.append(
+            {"text": text, "model_version": model_version, "expected_sha256": expected_sha256}
+        )
+        if self._classify_error:
+            raise self._classify_error
+        category, confidence = self._classify_result or ("NOT_A_THREAT", 0.9)
+        return MlResponse(request_id, {"category": category}, model_version, confidence=confidence)
 
     async def generate(self, request_id, user_text, category, risk_level, context=None, url_verdicts=None):
         self.generate_calls.append(
@@ -99,7 +119,7 @@ def rig(monkeypatch):
     """Stub every outbound hop; return the handles the tests assert on."""
     state: dict[str, object] = {}
 
-    def install(ml=None, waha=None, url_scan=None, logged=True, log_error=None):
+    def install(ml=None, waha=None, url_scan=None, logged=True, log_error=None, production_model=None):
         ml = ml or FakeMlClient()
         waha = waha or FakeWaha()
         rows: list = []
@@ -107,6 +127,14 @@ def rig(monkeypatch):
         monkeypatch.setattr(orchestrator.aioredis, "from_url", lambda *a, **k: FakeRedis())
         monkeypatch.setattr(orchestrator, "MlClient", lambda settings: ml)
         monkeypatch.setattr(orchestrator, "WahaClient", lambda settings: waha)
+
+        # No live Postgres in a unit test, and no promoted model by default —
+        # every existing test exercises the "inert until promoted" path
+        # unless it opts in via `production_model=`.
+        async def fake_production_model(settings):
+            return production_model
+
+        monkeypatch.setattr(orchestrator, "_cached_production_model", fake_production_model)
 
         async def fake_scan(urls, redis=None, settings=None):
             return url_scan or UrlScanResult(risk=RiskLevel.UNKNOWN)
@@ -338,6 +366,58 @@ async def test_empty_body_without_attachment_is_ignored(rig):
     rig()
     result = await orchestrator.process_message_job(job(text="   "), {}, SETTINGS)
     assert result["status"] == "ignored_empty_body"
+
+
+PRODUCTION_MODEL = {"model_version": "clf-abc123", "artifact_sha256": "deadbeef"}
+
+
+async def test_ml_classify_is_never_called_without_a_promoted_model(rig):
+    """Inert by default (07_Model_Registry_and_Deployment §3-4): shipping the
+    classifier infra must not change behaviour until an operator explicitly
+    promotes a model.
+    """
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH]))
+    await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert state["ml"].classify_calls == []
+
+
+async def test_ml_classify_folds_into_risk_once_a_model_is_promoted(rig):
+    ml = FakeMlClient(matches=[], classify_result=("FINANCIAL_FRAUD", 0.87))
+    state = rig(ml=ml, production_model=PRODUCTION_MODEL)
+
+    result = await orchestrator.process_message_job(job(HOAX_TEXT), {}, SETTINGS)
+
+    assert ml.classify_calls == [
+        {"text": orchestrator.normalize_text(HOAX_TEXT).text, "model_version": "clf-abc123", "expected_sha256": "deadbeef"}
+    ]
+    assert result["ml_category"] == "FINANCIAL_FRAUD"
+    assert result["ml_confidence"] == 0.87
+    # FINANCIAL_FRAUD -> HIGH in CATEGORY_RISK, which now wins over the
+    # rules-engine's own MEDIUM (no knowledge-base match) via worst_risk.
+    assert result["risk"] == "HIGH"
+
+
+async def test_ml_classify_not_a_threat_does_not_suppress_a_rules_engine_high(rig):
+    """Additive only: a LOW/benign ML prediction must never pull risk down."""
+    ml = FakeMlClient(matches=[KB_MATCH], classify_result=("NOT_A_THREAT", 0.99))
+    rig(ml=ml, production_model=PRODUCTION_MODEL)
+
+    result = await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert result["ml_category"] == "NOT_A_THREAT"
+    assert result["risk"] == "HIGH"  # rules engine's own HOAX verdict still wins
+
+
+async def test_ml_classify_failure_degrades_without_breaking_the_pipeline(rig):
+    ml = FakeMlClient(matches=[KB_MATCH], classify_error=MlServiceError("ml_unreachable", "down", retryable=True))
+    state = rig(ml=ml, production_model=PRODUCTION_MODEL)
+
+    result = await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert any(item.startswith("ml_classify_unavailable") for item in result["degradations"])
+    assert result["response_dispatched"] is True
+    assert len(state["rows"]) == 1
 
 
 async def test_apk_attachment_is_warned_without_static_analysis(rig):

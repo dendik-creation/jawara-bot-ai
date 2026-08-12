@@ -51,7 +51,7 @@ docker compose ps
 
 Semua host port datang dari `.env` (`WAHA_PORT`, `API_GATEWAY_PORT`, `QDRANT_PORT`, `FRONTEND_PORT`, `POSTGRES_PORT`, `REDIS_PORT`), bukan hardcoded di compose — ganti value di `.env` kalau port bentrok, tidak perlu edit `docker-compose.yml`.
 
-`postgres` dan `redis` published ke host lewat `${POSTGRES_PORT}:5432` / `${REDIS_PORT}:6379` khusus supaya backend/frontend yang dijalankan **di luar** `jawara-net` (kasus dev hybrid ini) bisa connect ke `localhost:<port>`. Kalau file `.env` lama tidak punya `POSTGRES_PORT`/`REDIS_PORT`, tambahkan manual — tanpa var ini compose gagal publish port dan backend lokal tidak bisa connect (lihat §6).
+`postgres` dan `redis` published ke host lewat `127.0.0.1:${POSTGRES_PORT}:5432` / `127.0.0.1:${REDIS_PORT}:6379` khusus supaya backend/frontend yang dijalankan **di luar** `jawara-net` (kasus dev hybrid ini) bisa connect ke `localhost:<port>`. Loopback-only (`127.0.0.1`, bukan `0.0.0.0`) dengan sengaja — sama persis compose yang dipakai di produksi ([[02_Prod_Environtment]] §1), jadi tidak ada file terpisah untuk "mode aman" vs "mode dev". Kalau file `.env` lama tidak punya `POSTGRES_PORT`/`REDIS_PORT`, tambahkan manual — tanpa var ini compose gagal publish port dan backend lokal tidak bisa connect (lihat §6).
 
 ---
 
@@ -93,17 +93,39 @@ uv run python -m app.scripts.seed_facts       # isi fact_sources + fact_items (d
 uv run python -m app.scripts.ingest_knowledge # embed fact_items ke Qdrant lewat ML Service
 
 # Akun operator Control Panel — tanpa ini tidak ada yang bisa masuk ke dashboard.
-# Password diminta lewat prompt (tidak di-echo), atau dari env OPERATOR_PASSWORD.
-uv run python -m app.scripts.create_operator --email kamu@contoh.id --name "Nama Kamu"
+# Baca OPERATOR_EMAIL/OPERATOR_NAME/OPERATOR_PASSWORD dari .env; tanpa argumen sama sekali.
+uv run python -m app.scripts.create_operator
 ```
 
-Tidak ada endpoint pendaftaran mandiri: Control Panel adalah konsol internal, dan yang bisa menjalankan perintah di atas sudah memegang kredensial database. Lupa password? `--reset-password` dengan email yang sama.
+Tidak ada endpoint pendaftaran mandiri: Control Panel adalah konsol internal, dan yang bisa menjalankan perintah di atas sudah memegang kredensial database. Aman diulang — akun yang sudah ada dibiarkan (exit 0, bukan error), jadi masuk wajar di alur bootstrap yang sama dipanggil berkali-kali. Ganti email/nama sekali pakai lewat `--email`/`--name` (masih didukung, override nilai `.env`). Lupa password? `--reset-password` dengan email yang sama.
 
 `qdrant_setup` mencetak config live-nya untuk dicocokkan dengan tabel di [[02_VectorDB_Specifications]].
 
 Dua langkah terakhir mengisi knowledge base. Tanpa itu, `POST /v1/rag-query` selalu mengembalikan `unverified: true` — bukan error, tapi tidak ada yang bisa dicocokkan. `ingest_knowledge` butuh `ml-service` hidup dan `ML_SERVICE_URL` mengarah ke sana (`http://localhost:9000` untuk dev hybrid).
 
 `ML_SERVICE_URL`/`ML_SERVICE_API_KEY` sudah tertangani oleh tabel di atas. `GOOGLE_SAFE_BROWSING_API_KEY` dan `VIRUSTOTAL_API_KEY` boleh dikosongkan di `.env` — provider yang tidak dikonfigurasi hanya menghasilkan verdict `UNKNOWN`, bukan kegagalan pipeline. Isi dengan nilai asal-asalan justru lebih buruk: provider dianggap aktif lalu ditolak upstream.
+
+### (Opsional) LLM balasan asli, bukan template
+
+`LLM_PROVIDER=template` (default) membalas lewat composer deterministik — cukup untuk menguji pipeline, tidak untuk menilai kualitas balasan. Dua alternatif:
+
+- `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` — provider produksi (Claude Haiku).
+- `LLM_PROVIDER=openai_compatible` + `LLM_BASE_URL` (sampai `.../v1`, kode menambahkan `/chat/completions` sendiri) + `LLM_API_KEY` + `LLM_MODEL` — endpoint apa pun yang bicara format Chat Completions: OpenAI asli, OpenRouter, Groq, vLLM/Ollama self-hosted. Sengaja terpisah dari `OPENAI_API_KEY` di atas (itu punya `EMBEDDING_PROVIDER=openai`, servis berbeda yang kebetulan sama vendornya).
+
+Provider tanpa key-nya jatuh ke `template` otomatis (`degraded_reasons` di `GET /v1/ready`) — bukan crash.
+
+### (Opsional) Threat classifier: seed data, train, evaluate, promote
+
+Baseline TF-IDF + LogisticRegression (`ml-service/app/models/classifier.py`). Tanpa model `PRODUCTION`, pipeline berjalan seperti biasa lewat Detection Rules saja — bagian ini murni untuk menguji jalur training end-to-end, bukan prasyarat menjalankan bot.
+
+```bash
+# butuh minimal satu akun operator (§4 di atas) — created_by/added_by adalah FK ke operators
+uv run python -m app.scripts.seed_dataset_samples
+```
+
+Membuat dua dataset VALIDATED: `core-detection-train` (240 sample, 40/label) dan `core-detection-eval` (60 sample, 10/label) — sintetis, dibuat dari template Bahasa Indonesia per kategori (lihat docstring script), bukan corpus asli. Cukup untuk membuktikan mekanismenya jalan, bukan akurasi tingkat produksi.
+
+Training job, evaluation, dan promosi model dijalankan lewat Control Panel (`/training-jobs`, `/evaluation`, `/models`) — buat training job dengan dataset `core-detection-train`, tunggu `COMPLETED`, buat evaluation dengan dataset `core-detection-eval`, tunggu `COMPLETED`, lalu `VALIDATE` → `PROMOTE` model version yang muncul di `/models`. Baru setelah `PROMOTE`, `app.pipeline.orchestrator` mulai memanggil `/v1/classify` sebagai sinyal risiko tambahan (lihat [[05_Training_Jobs]], [[07_Model_Registry_and_Deployment]]).
 
 Jalankan dengan hot-reload:
 

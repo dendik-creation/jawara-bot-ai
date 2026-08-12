@@ -2,13 +2,12 @@
 
 Gate between "model finished training" and "model may serve production" —
 the spec frames evaluation as scoring a trained model against a fixed,
-independent eval/test dataset. `ml-service` has no `/v1/evaluate` route at
-all yet. `execute_model_evaluation` (run from the Celery worker,
-`app.worker.tasks.run_model_evaluation`) genuinely calls
-`MlClient.evaluate(...)` and genuinely fails today — the same honesty
-pattern already live for `/v1/train` (Stage 11) and `/v1/classify`'s
-`model_not_available` before that, rather than fabricating a completed
-evaluation or invented metrics.
+independent eval/test dataset. `execute_model_evaluation` (run from the
+Celery worker, `app.worker.tasks.run_model_evaluation`) calls the real
+`MlClient.evaluate(...)` — the eval dataset's rows travel inline in the
+request (ml-service has no database of its own) and `expected_sha256` comes
+from the training job's own recorded `artifact_sha256`, so an evaluation
+can never silently score against a model nobody can vouch for.
 
 `training_job_id` names the trained model under test (via its
 `generated_model_version` — only set on `COMPLETED` training jobs, so
@@ -245,7 +244,7 @@ async def execute_model_evaluation(evaluation_id: str, settings: Settings | None
     try:
         job = await conn.fetchrow(
             """
-            SELECT e.training_job_id, t.generated_model_version,
+            SELECT e.training_job_id, t.generated_model_version, t.metrics->>'artifact_sha256' AS artifact_sha256,
                    d.id AS dataset_id, d.name AS dataset_name, d.version AS dataset_version
             FROM model_evaluations e
             JOIN training_jobs t ON t.id = e.training_job_id
@@ -267,14 +266,29 @@ async def execute_model_evaluation(evaluation_id: str, settings: Settings | None
             evaluation_id,
         )
 
+        # ml-service has no database of its own — ship the eval dataset's
+        # rows inline, same reasoning as `execute_training_job`.
+        sample_rows = await conn.fetch(
+            "SELECT text, label FROM dataset_samples WHERE dataset_id = $1", job["dataset_id"]
+        )
+        samples = [{"text": row["text"], "label": row["label"]} for row in sample_rows]
+
+        if not job["artifact_sha256"]:
+            await _mark_failed(
+                conn, evaluation_id, "training job has no recorded artifact_sha256 — cannot verify the model", settings
+            )
+            return
+
         try:
             response = await MlClient(settings).evaluate(
                 request_id=f"eval-{evaluation_id}",
                 model_version=job["generated_model_version"],
+                expected_sha256=job["artifact_sha256"],
                 dataset_ref={
                     "id": str(job["dataset_id"]),
                     "name": job["dataset_name"],
                     "version": job["dataset_version"],
+                    "samples": samples,
                 },
             )
         except MlServiceError as exc:

@@ -108,6 +108,12 @@ class PipelineOutcome:
     match_count: int = 0
     similarity_score: float | None = None
     matched_fact_id: str | None = None
+    # How the retrieval query was produced ("llm", "heuristic", "passthrough")
+    # and whether ml-service re-ranked what came back. Both are diagnostics for
+    # "why did retrieval match this" — logged, not stored on the audit row,
+    # whose columns are fixed by 03_Database/01_PostgreSQL_Schema.md.
+    claim_method: str | None = None
+    reranked: bool = False
     ml_category: str | None = None
     ml_confidence: float | None = None
     response_dispatched: bool = False
@@ -125,6 +131,8 @@ class PipelineOutcome:
             "url_count": self.url_count,
             "match_count": self.match_count,
             "similarity_score": self.similarity_score,
+            "claim_method": self.claim_method,
+            "reranked": self.reranked,
             "ml_category": self.ml_category,
             "ml_confidence": self.ml_confidence,
             "response_dispatched": self.response_dispatched,
@@ -195,7 +203,8 @@ async def process_message_job(
 
     body = payload.get("body") or payload.get("caption") or ""
     attachments = _attachment_names(payload)
-    if not body.strip() and not attachments:
+    quoted_id = group_policy.quoted_message_id(payload)
+    if not body.strip() and not attachments and not quoted_id:
         outcome.status = "ignored_empty_body"
         return outcome.as_dict()
 
@@ -226,10 +235,27 @@ async def process_message_job(
 
     if decision.is_group:
         body = group_policy.strip_bot_mentions(body, bot_ids)
+
+    # A reply carries its own new text (often empty — "@JAWARA, is this true?"
+    # or just the mention) plus a pointer to the message being asked about. The
+    # pointer is what must actually be checked, so it is fetched and folded in
+    # before anything downstream reads `body` — a bare "@JAWARA" on a reply is
+    # a complete request, not an empty one.
+    if decision.quoted_message_id:
+        quoted_text = await WahaClient(settings).get_message_text(
+            message.session, chat_id, decision.quoted_message_id
+        )
+        if quoted_text:
+            body = f"{quoted_text}\n\n{body}".strip() if body.strip() else quoted_text
+        else:
+            outcome.degradations.append("quoted_message_unavailable")
+
+    if decision.is_group:
         if not body.strip() and not attachments:
-            # "@JAWARA" and nothing else: called, but given nothing to check.
-            # Silence would read as a broken bot, so say what it needs — and say
-            # it as a quote of the summons, so the group sees who asked.
+            # "@JAWARA" and nothing else — no reply, no attachment, no quoted
+            # text recovered: called, but given nothing to check. Silence would
+            # read as a broken bot, so say what it needs — and say it as a
+            # quote of the summons, so the group sees who asked.
             send = await WahaClient(settings).send_text(
                 chat_id, EMPTY_MENTION_REPLY, session=message.session, reply_to=message.waha_message_id
             )
@@ -293,13 +319,35 @@ async def process_message_job(
                 outcome.degradations.append("url_intel_unavailable")
 
         elif intent.engine == intent_router.ENGINE_TEXT_VERIFICATION:
+            # Retrieve on the claim, not on the forward. A chain letter's
+            # greeting, emoji and "TOLONG SEBARKAN!!!" are embedded too, and
+            # they pull the vector away from the curated claim the knowledge
+            # base actually stores. Extraction degrades rather than fails —
+            # ml-service falls back to a deterministic heuristic internally —
+            # so a failure here costs match quality, never the answer.
+            rag_query_text = normalized.text
+            if settings.rag_claim_extraction_enabled and normalized.text.strip():
+                try:
+                    extraction = await ml.extract_claim(
+                        request_id,
+                        normalized.text,
+                        category=intent.category.value if intent.category else None,
+                    )
+                    extracted = str(extraction.result.get("claim") or "").strip()
+                    if extracted:
+                        rag_query_text = extracted
+                        outcome.claim_method = str(extraction.result.get("method") or "")
+                except MlServiceError as exc:
+                    outcome.degradations.append(f"claim_extraction_unavailable:{exc.error_code}")
+
             try:
                 response = await ml.rag_query(
                     request_id,
-                    query=normalized.text,
+                    query=rag_query_text,
                     category=intent.category.value if intent.category else None,
                 )
                 matches = list(response.result.get("matches") or [])
+                outcome.reranked = bool(response.result.get("reranked"))
             except MlServiceError as exc:
                 outcome.degradations.append(f"ml_unavailable:{exc.error_code}")
             if matches:

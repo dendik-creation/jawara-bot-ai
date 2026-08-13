@@ -1,6 +1,6 @@
 # Model Evaluation
 
-> **Scope:** MVP · **Status:** Planned
+> **Scope:** MVP · **Status:** Implemented
 
 Evaluasi adalah gerbang antara "model selesai dilatih" dan "model boleh melayani produksi".
 

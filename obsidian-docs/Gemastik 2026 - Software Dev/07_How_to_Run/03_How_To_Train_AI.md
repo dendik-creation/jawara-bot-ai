@@ -4,6 +4,9 @@ Model: TF-IDF (word + char n-gram) + `LogisticRegression`, `ml-service/app/model
 
 **Yang menentukan akurasi di sini cuma satu hal: kualitas dan jumlah data berlabel.** Training job menerima field `epochs`/`learning_rate`/`batch_size`/`validation_split` di API-nya (§Appendix), tapi `classifier.train()` saat ini **tidak memakainya sama sekali** — `LogisticRegression` di-fit langsung (`max_iter=1000`, `class_weight="balanced"` tetap). Jangan berharap menaikkan akurasi lewat hyperparameter; satu-satunya tuas nyata adalah data.
 
+> [!warning] Knowledge Base ≠ data training classifier
+> Menu **AI / ML → Knowledge Base** (`/knowledge-base`, `backend/app/services/knowledge.py`) adalah tabel `fact_items` terpisah total — dipakai untuk retrieval RAG lewat Qdrant, bukan input `datasets`/`training_jobs` di dokumen ini. Fitur **Import CSV** di halaman itu (tombol di `KnowledgeBaseList`) meng-import fact item (klaim + penjelasan + verdict + sumber), bukan sample training. Tidak ada endpoint atau tombol CSV import untuk sample dataset classifier — baik lewat API maupun UI, sample dataset cuma bisa ditambah satu per satu (§1, §1a). Penempatan CSV import di Knowledge Base **sudah benar** kalau itu memang untuk fact item; kalau tujuannya menambah sample training massal, itu belum ada di codebase sama sekali.
+
 ---
 
 ## 0. Prasyarat
@@ -46,6 +49,15 @@ curl -s -X POST $API/api/v1/datasets/<dataset_id>/samples \
   -d '{"text":"Selamat anda menang hadiah 50 juta, transfer biaya admin dulu","label":"FINANCIAL_FRAUD"}'
 ```
 
+### 1a. Lewat Control Panel (UI), bukan curl
+
+Semua langkah §1–§5 punya padanan UI di **AI / ML** (`frontend/components/layout/navigation.ts`), diverifikasi cocok dengan endpoint di atas:
+
+- **Datasets** (`/datasets`) — tombol **Buat Dataset** (nama/versi/sumber/deskripsi), buka dataset → **Tambah sample manual** (teks + label, satu-satu, sama seperti curl §1 — tidak ada bulk/CSV di sini) → **Validasi**.
+- **Training Jobs** (`/training-jobs`) — tombol **Buat Job**: dropdown dataset hanya menampilkan yang `VALIDATED` (mengunci aturan §2 di level form), field base model bebas teks, epochs/learning-rate/batch-size/validation-split ada di form tapi diabaikan backend (sama seperti dicatat di atas).
+- **Evaluation** (`/evaluation`) — tombol **Buat Evaluasi**: dropdown training job hanya `COMPLETED`, dropdown dataset uji hanya `VALIDATED` — mencocokkan §3.
+- **Models** (`/models`) — buka model version `CANDIDATE` → **Validasi**, lalu `VALIDATED` → **Promosikan ke Production** (§5). Versi `ARCHIVED` punya tombol **Rollback (promosikan kembali)** — ini jalur rollback §5 tanpa perlu curl.
+
 ### Berapa banyak, seberapa seimbang
 
 - Minimal **puluhan sample per label** untuk mulai berarti secara statistik; makin banyak makin baik, terutama untuk label yang gampang tertukar (mis. `PHISHING_LINK` vs `FINANCIAL_FRAUD` — sama-sama sering menyebut "klik"/"transfer").
@@ -85,6 +97,9 @@ watch -n 2 "curl -s $API/api/v1/training-jobs/<job_id> -H 'Authorization: Bearer
 ```
 
 `QUEUED → RUNNING → COMPLETED` (atau `FAILED`, dengan `error_message` — genuinely gagal, bukan hasil dipalsukan). Cepat untuk TF-IDF+LogisticRegression (detik, bukan menit) kecuali dataset sangat besar.
+
+> [!note] `EVALUATING` di enum status tidak pernah dipakai
+> Skema (`training_job_status_enum`) dan filter status di UI Training Jobs mencantumkan `EVALUATING`, tapi `backend/app/services/training_jobs.py` cuma pernah menulis `RUNNING → COMPLETED`/`FAILED` — tidak ada transisi ke `EVALUATING` di mana pun. Jangan tunggu status itu muncul saat polling.
 
 `metrics.train_metrics.accuracy` yang muncul di sini **BUKAN** ukuran yang dipakai untuk target 80% — itu skor model terhadap data yang baru saja dipakai melatihnya sendiri, selalu optimis (biasanya mendekati 1.0). Abaikan untuk keputusan promosi. Yang dipakai adalah §3.
 

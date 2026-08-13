@@ -21,7 +21,9 @@ from app.llm.template_provider import TemplateProvider
 from app.llm.validator import validate_response
 from app.models import classifier as classifier_module
 from app.models.registry import registry
+from app.rag import claim as claim_module
 from app.rag.qdrant_repo import QdrantRepository
+from app.rag.ranking import rerank
 from app.schemas.contract import MlRequest, MlResponse
 
 logger = logging.getLogger("app.api.inference")
@@ -80,12 +82,17 @@ async def rag_query(
     request: MlRequest,
     repository: QdrantRepository = Depends(get_repository),
 ) -> MlResponse:
-    """Embed the claim, then run the documented filtered similarity search.
+    """Embed the claim, run the documented filtered search, then re-rank.
 
     Below-threshold results are reported as `unverified: true` with an empty
     match list. Returning the nearest weak match instead would let the generator
     write a confident answer on top of an unrelated fact — the single most
     damaging failure mode this pipeline has.
+
+    Re-ranking (app/rag/ranking.py) reorders what came back by source
+    reliability and freshness and cuts to `top_k`. It never changes which
+    matches passed the similarity threshold, and `score` stays the raw cosine
+    similarity the audit row records — see that module for why.
     """
     settings = get_settings()
     query = (request.payload.get("query") or "").strip()
@@ -99,13 +106,19 @@ async def rag_query(
         if request.payload.get("score_threshold") is not None
         else settings.rag_score_threshold
     )
+    # Per-request override so an operator tool can inspect raw retrieval
+    # without redeploying the service with re-ranking off.
+    reranking = settings.rag_rerank_enabled and request.payload.get("rerank") is not False
+    # Overfetch, then trim: re-ordering exactly `top_k` candidates can never
+    # promote a trustworthy fourth match over a shaky third.
+    fetch_k = top_k * max(1, settings.rag_rerank_overfetch) if reranking else top_k
 
     embedder = registry.embedder()
     with Timer() as timer:
         vectors = await embedder.embed([query])
         try:
             matches = await repository.search(
-                vector=vectors[0], category=category, top_k=top_k, score_threshold=threshold
+                vector=vectors[0], category=category, top_k=fetch_k, score_threshold=threshold
             )
         except Exception as exc:  # noqa: BLE001
             # Qdrant down: the pipeline continues without knowledge context and
@@ -115,7 +128,23 @@ async def rag_query(
                 "retrieval_unavailable", type(exc).__name__, status_code=503, retryable=True
             ) from exc
 
-    top_score = max((match["score"] for match in matches), default=0.0)
+        candidate_count = len(matches)
+        if reranking:
+            matches = rerank(
+                matches,
+                top_k=top_k,
+                reliability_weight=settings.rag_reliability_weight,
+                recency_weight=settings.rag_recency_weight,
+                half_life_days=settings.rag_recency_half_life_days,
+            )
+        else:
+            matches = matches[:top_k]
+
+    # The raw similarity of the top-*ranked* match — the one the generator will
+    # actually cite. Not the discounted score (the audit row must stay able to
+    # answer "how well did retrieval match"), and not the maximum across the
+    # list, which before re-ranking were the same number and now are not.
+    top_score = float(matches[0].get("score") or 0.0) if matches else 0.0
     return envelope(
         request.request_id,
         {
@@ -124,10 +153,49 @@ async def rag_query(
             "score_threshold": threshold,
             "category_filter": category,
             "top_k": top_k,
+            "reranked": reranking,
+            "candidates_considered": candidate_count,
         },
         embedder.model_version,
         timer.elapsed_ms,
         confidence=top_score,
+    )
+
+
+@router.post("/extract-claim", response_model=MlResponse)
+async def extract_claim(request: MlRequest) -> MlResponse:
+    """Canonicalise a forwarded WhatsApp message into one claim sentence.
+
+    Called by the gateway immediately before `/rag-query`, so retrieval matches
+    on the claim rather than on the greeting, emoji and "TOLONG SEBARKAN!!!"
+    wrapped around it (app/rag/claim.py explains why that gap matters).
+
+    Never fails on a provider problem: the deterministic heuristic is always
+    available, and `fallback_used`/`fallback_reason` say when it was used.
+    """
+    text = str(request.payload.get("text") or "")
+    if not text.strip():
+        raise MlError("invalid_payload", "payload.text must be a non-empty string", retryable=False)
+
+    settings = get_settings()
+    with Timer() as timer:
+        extraction = await claim_module.extract_claim(
+            text, provider=registry.llm(), settings=settings
+        )
+
+    logger.info(
+        "claim extracted",
+        extra={
+            "request_id": request.request_id,
+            "method": extraction.method,
+            "fallback_used": extraction.fallback_used,
+        },
+    )
+    return envelope(
+        request.request_id,
+        extraction.as_result(text),
+        extraction.model_version,
+        timer.elapsed_ms,
     )
 
 

@@ -31,19 +31,30 @@ class AnthropicProvider(LlmProvider):
         self._settings = settings
 
     async def generate(self, request: GenerationRequest) -> str:
-        body = {
-            "model": self._settings.llm_model,
-            "max_tokens": self._settings.llm_max_tokens,
-            "temperature": self._settings.llm_temperature,
+        return await self.complete(
             # System prompt goes in the dedicated field, never concatenated into
             # the user turn — that separation is what keeps retrieved knowledge
             # from being read as instructions.
-            "system": load_system_prompt(),
-            "messages": [{"role": "user", "content": build_user_message(request)}],
+            load_system_prompt(),
+            build_user_message(request),
+            max_tokens=self._settings.llm_max_tokens,
+            temperature=self._settings.llm_temperature,
+            timeout=self._settings.llm_timeout_seconds,
+        )
+
+    async def complete(
+        self, system: str, user: str, *, max_tokens: int, temperature: float, timeout: float
+    ) -> str:
+        body = {
+            "model": self._settings.llm_model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self._settings.llm_timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     f"{self._settings.anthropic_base_url.rstrip('/')}/messages",
                     headers={

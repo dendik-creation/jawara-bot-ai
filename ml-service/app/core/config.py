@@ -35,6 +35,41 @@ class Settings(BaseSettings):
     rag_top_k: int = 3
     rag_score_threshold: float = 0.80
 
+    # Re-ranking (app/rag/ranking.py). Retrieval asks Qdrant for
+    # `top_k * overfetch` candidates and returns the best `top_k` after
+    # weighting by source reliability and freshness — reordering only, never
+    # re-filtering, so `score` stays the documented cosine similarity.
+    rag_rerank_enabled: bool = True
+    # 3x: enough headroom for a trustworthy fourth match to overtake a shaky
+    # second, without turning every query into a wide scan.
+    rag_rerank_overfetch: int = 3
+    # Both weights are the maximum penalty their signal may apply. 0 disables
+    # that signal exactly; 1.0 would let a zero-reliability or infinitely old
+    # match be scored to zero. Reliability is weighted higher than recency:
+    # who said it is a stronger signal than when, and a two-year-old MAFINDO
+    # debunk of a recirculating hoax is still the right answer.
+    rag_reliability_weight: float = 0.4
+    rag_recency_weight: float = 0.25
+    # Days at which the recency factor halves. 180 ≈ two turns of the seasonal
+    # hoax cycle — long enough that a genuinely useful old debunk survives.
+    rag_recency_half_life_days: float = 180.0
+
+    # --- Claim extraction (app/rag/claim.py) -------------------------------
+    # "auto" uses the LLM when one is actually configured and the deterministic
+    # heuristic otherwise; "llm"/"heuristic" force one path. The heuristic is
+    # not a stub — it is what runs offline, in CI, and whenever the vendor
+    # fails mid-request.
+    claim_extraction_provider: str = "auto"
+    # Messages shorter than this are already claims; rewriting them into
+    # themselves would spend an LLM round trip out of the <3s budget for
+    # nothing.
+    claim_extraction_min_input_chars: int = 180
+    claim_extraction_max_chars: int = 320
+    claim_extraction_max_tokens: int = 200
+    # Tighter than llm_timeout_seconds: this call sits in front of retrieval,
+    # so its whole cost is added to the pipeline before any evidence is read.
+    claim_extraction_timeout_seconds: float = 6.0
+
     # --- LLM --------------------------------------------------------------
     # Decision (03_Tech_Stack §4): Anthropic Claude Haiku is the production
     # provider. "template" is the deterministic offline composer used when no
@@ -48,7 +83,11 @@ class Settings(BaseSettings):
     # are unrelated services that happen to share a vendor name.
     llm_provider: str = "template"
     llm_model: str = "claude-haiku-4-5-20251001"
-    llm_max_tokens: int = 900
+    # Reasoning-capable models (e.g. Gemini 2.5+/3.x) spend part of max_tokens on
+    # invisible thinking tokens before the visible completion — a budget sized
+    # for the ~150-300 word four-section reply alone gets exhausted by thinking
+    # first and truncates (finish_reason=length) before any visible text lands.
+    llm_max_tokens: int = 4096
     llm_temperature: float = 0.2
     llm_timeout_seconds: float = 20.0
     anthropic_api_key: str = ""

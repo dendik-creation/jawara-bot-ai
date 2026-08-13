@@ -118,9 +118,30 @@ def test_rag_query_applies_the_documented_filters_and_threshold(client):
         headers=HEADERS,
     ).json()
 
-    assert repository.last_query == {"category": "HEALTH_HOAX", "top_k": 3, "score_threshold": 0.80}
+    # Category filter and threshold are the documented contract and unchanged.
+    # `top_k` asked of Qdrant is larger than the `top_k` returned: re-ranking
+    # overfetches so a trustworthy fourth match can overtake a shaky third.
+    settings = get_settings()
+    assert repository.last_query["category"] == "HEALTH_HOAX"
+    assert repository.last_query["score_threshold"] == 0.80
+    assert repository.last_query["top_k"] == settings.rag_top_k * settings.rag_rerank_overfetch
+    assert body["result"]["top_k"] == settings.rag_top_k
     assert body["result"]["unverified"] is False
     assert body["confidence"] == 0.91
+
+
+def test_rag_query_without_reranking_asks_for_exactly_top_k(client):
+    repository = FakeRepository(hits=[{**KITOLOD_PAYLOAD, "score": 0.91}])
+    client.app.state.qdrant = repository
+
+    body = client.post(
+        "/v1/rag-query",
+        json=envelope({"query": "daun kitolod katarak", "rerank": False}),
+        headers=HEADERS,
+    ).json()
+
+    assert repository.last_query["top_k"] == get_settings().rag_top_k
+    assert body["result"]["reranked"] is False
 
 
 def test_below_threshold_query_returns_an_explicit_unverified_signal(client):

@@ -118,6 +118,36 @@ class WahaClient:
         )
         return SendResult(delivered=False, chat_id=chat_id, attempts=attempts, error=last_error)
 
+    async def get_message_text(self, session: str, chat_id: str, message_id: str) -> str | None:
+        """Body text of one historical message — the content a reply is asking about.
+
+        WAHA's webhook payload for a reply carries the *replied-to* message's id
+        (`app/pipeline/group_policy.py:quoted_message_id`), not its text — the
+        quote is a pointer, not an inline copy. This resolves that pointer.
+        Returns `None` on any failure (message deleted, id from before the
+        session paired, WAHA unreachable); the caller treats that as "no quoted
+        text available", not an error.
+        """
+        url = f"{self._settings.waha_api_url.rstrip('/')}/api/{session}/chats/{chat_id}/messages/{message_id}"
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.waha_send_timeout_seconds) as client:
+                response = await client.get(url, headers=self._headers)
+            if response.status_code >= 400:
+                return None
+            data = response.json()
+        except Exception:  # noqa: BLE001 — a missing quote must degrade, not raise
+            logger.warning(
+                "waha quoted message fetch failed",
+                extra={"chat_id": chat_id, "message_id": message_id},
+                exc_info=True,
+            )
+            return None
+
+        if not isinstance(data, dict):
+            return None
+        text = data.get("body") or data.get("caption")
+        return text.strip() if isinstance(text, str) and text.strip() else None
+
     async def list_sessions(self) -> list[dict[str, object]]:
         """Normalised session list for the Control Panel.
 

@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.pipeline.orchestrator import process_message_job
 from app.schemas.queue import MessageJob
 from app.worker.celery_app import (
+    TASK_INGEST_FACT_CHECKS,
     TASK_PROCESS_MESSAGE,
     TASK_RUN_MODEL_EVALUATION,
     TASK_RUN_TRAINING_JOB,
@@ -101,6 +102,51 @@ async def _run_model_evaluation(evaluation_id: str) -> None:
     from app.services.model_evaluations import execute_model_evaluation
 
     await execute_model_evaluation(evaluation_id)
+
+
+@celery_app.task(
+    bind=True,
+    name=TASK_INGEST_FACT_CHECKS,
+    # No autoretry_for: a crawl fails for many reasons and only some are worth
+    # repeating. The task inspects its own result and retries explicitly when
+    # the *source* was unreachable — a malformed article or a rejected item
+    # would fail identically on a redelivery, and the next scheduled tick is
+    # already the retry for anything else.
+    max_retries=_settings.celery_max_retries,
+)
+def ingest_fact_checks(self, source: str | None = None, triggered_by: str = "SCHEDULE") -> list[dict[str, Any]]:
+    """Pull new fact-checks from the configured external sources.
+
+    Runs on Celery Beat (`fact_ingestion_interval_minutes`) and on the
+    operator's manual trigger — never as part of message processing: a user
+    waiting on a WhatsApp reply must not be behind a crawl.
+    """
+    logger.info(
+        "fact-check ingestion consumed",
+        extra={"source": source or "all", "trigger": triggered_by, "task_id": self.request.id},
+    )
+    summaries = asyncio.run(_ingest_fact_checks(source, triggered_by))
+
+    retryable = [s for s in summaries if s.get("status") == "FAILED" and s.get("retryable")]
+    if retryable and self.request.retries < self.max_retries:
+        delay = _settings.celery_retry_backoff_seconds * (2**self.request.retries)
+        logger.warning(
+            "fact-check ingestion retrying",
+            extra={"sources": [s["source"] for s in retryable], "countdown": delay},
+        )
+        raise self.retry(countdown=delay)
+
+    logger.info("fact-check ingestion finished", extra={"results": summaries})
+    return summaries
+
+
+async def _ingest_fact_checks(source: str | None, triggered_by: str) -> list[dict[str, Any]]:
+    """Same one-event-loop-per-job bridge as `run_pipeline` — see its docstring."""
+    from app.services.fact_ingestion import run_all_sources, run_ingestion
+
+    if source:
+        return [await run_ingestion(source, triggered_by=triggered_by)]
+    return await run_all_sources(triggered_by=triggered_by)
 
 
 def run_pipeline(message: MessageJob, log_context: dict[str, Any]) -> dict[str, Any]:

@@ -53,7 +53,8 @@ Versi di path (`/v1/...`). Setiap request membawa `request_id` yang sama dengan 
 | `POST /v1/classify` | Klasifikasi ancaman + confidence | Planned — menjawab `model_not_available` (belum ada model terlatih); gateway jatuh ke Detection Rules |
 | `POST /v1/ocr` | Ekstraksi teks dari gambar/flyer | Planned — OCR di luar scope Sprint 1 |
 | `POST /v1/embed` | Teks → vektor | Implemented |
-| `POST /v1/rag-query` | Embed + similarity search Qdrant + rakit konteks, satu panggilan | Implemented |
+| `POST /v1/extract-claim` | Pesan forward → satu kalimat klaim kanonik, sebelum retrieval | Implemented — LLM bila terkonfigurasi, heuristik deterministik sebagai default offline dan fallback ([[03_Knowledge_Base]] §9) |
+| `POST /v1/rag-query` | Embed + similarity search Qdrant + re-ranking reliability/recency + rakit konteks, satu panggilan | Implemented |
 | `POST /v1/generate` | Generasi respons LLM dari konteks yang sudah dirakit | Implemented |
 | `POST /v1/kb/upsert` | Embed + simpan fact item ke Qdrant (ingestion) | Implemented — tidak ada di rancangan awal, ditambahkan agar gateway tidak perlu menghitung embedding sendiri |
 | `POST /v1/train` | Mulai training job (dipanggil worker, bukan request user sinkron) | Planned — Fase 4 |
@@ -64,7 +65,7 @@ Versi di path (`/v1/...`). Setiap request membawa `request_id` yang sama dengan 
 
 **Error:** terstruktur (`{ error_code, message, retryable }`), bukan HTTP 500 telanjang, supaya gateway bisa memilih retry vs fallback secara programatik.
 
-**Timeout & retry:** budget per endpoint (classify lebih ketat dari generate). Retry hanya untuk endpoint idempoten (`classify`, `embed`, `rag-query`); `generate` tidak pernah di-retry buta — jatuh langsung ke fallback.
+**Timeout & retry:** budget per endpoint (classify lebih ketat dari generate). Retry hanya untuk endpoint idempoten (`classify`, `embed`, `rag-query`, `extract-claim`); `generate` tidak pernah di-retry buta — jatuh langsung ke fallback.
 
 ---
 

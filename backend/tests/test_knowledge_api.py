@@ -254,16 +254,123 @@ def test_sync_all_fact_items_route(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def _source(**overrides: object) -> dict[str, object]:
+    base = {
+        "id": 1,
+        "name": "Kominfo",
+        "base_url": "https://kominfo.go.id",
+        "slug": None,
+        "is_trusted": True,
+        "reliability_score": 0.8,
+        "created_at": "2026-08-11T10:00:00+00:00",
+    }
+    base.update(overrides)
+    return base
+
+
 def test_list_fact_sources_route(monkeypatch):
     monkeypatch.setattr(
         "app.services.knowledge.list_fact_sources",
-        AsyncMock(return_value=[{"id": 1, "name": "Kominfo", "base_url": "https://kominfo.go.id", "is_trusted": True, "created_at": "2026-08-11T10:00:00+00:00"}]),
+        AsyncMock(return_value=[_source(fact_count=12, synced_count=10)]),
     )
 
     body = client.get("/api/v1/knowledge/sources").json()
 
     assert body["available"] is True
     assert body["items"][0]["name"] == "Kominfo"
+    assert body["items"][0]["reliability_score"] == 0.8
+
+
+# --------------------------------------------------------------------------
+# Routes — source reliability
+# --------------------------------------------------------------------------
+
+
+def test_update_source_reliability_resyncs_and_audits(monkeypatch):
+    """A score lives in every one of that source's Qdrant payloads, so an edit
+    that skipped the re-sync would change nothing about retrieval."""
+    monkeypatch.setattr(
+        "app.services.knowledge.apply_fact_source_action",
+        AsyncMock(return_value={**_source(reliability_score=0.4), "previous_reliability": 0.8, "stale_in_qdrant": 3}),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.fact_item_ids_for_source", AsyncMock(return_value=["a", "b", "c"])
+    )
+    sync_mock = AsyncMock(return_value={"total": 3, "upserted": 3, "failed": 0, "rejected": []})
+    monkeypatch.setattr("app.services.knowledge.sync_fact_items", sync_mock)
+    audit_mock = AsyncMock()
+    monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", audit_mock)
+
+    body = client.patch("/api/v1/knowledge/sources/1", json={"reliability_score": 0.4}).json()
+
+    assert body["reliability_score"] == 0.4
+    assert body["resync"]["upserted"] == 3
+    sync_mock.assert_awaited_once_with(["a", "b", "c"])
+    metadata = audit_mock.await_args.kwargs["metadata"]
+    assert metadata["previous_reliability"] == 0.8
+    assert audit_mock.await_args.kwargs["action"] == "knowledge.source_updated"
+
+
+def test_update_source_can_skip_the_resync(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge.apply_fact_source_action",
+        AsyncMock(return_value={**_source(reliability_score=0.4), "previous_reliability": 0.8, "stale_in_qdrant": 3}),
+    )
+    sync_mock = AsyncMock()
+    monkeypatch.setattr("app.services.knowledge.sync_fact_items", sync_mock)
+    monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", AsyncMock())
+
+    body = client.patch(
+        "/api/v1/knowledge/sources/1", json={"reliability_score": 0.4, "resync": False}
+    ).json()
+
+    sync_mock.assert_not_awaited()
+    # The operator is still told how many facts now hold a stale score.
+    assert body["stale_in_qdrant"] == 3
+
+
+def test_update_source_reports_a_failed_resync_honestly(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge.apply_fact_source_action",
+        AsyncMock(return_value={**_source(reliability_score=0.4), "previous_reliability": 0.8, "stale_in_qdrant": 1}),
+    )
+    monkeypatch.setattr("app.services.knowledge.fact_item_ids_for_source", AsyncMock(return_value=["a"]))
+    monkeypatch.setattr(
+        "app.services.knowledge.sync_fact_items", AsyncMock(side_effect=ConnectionError("ml down"))
+    )
+    audit_mock = AsyncMock()
+    monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", audit_mock)
+
+    body = client.patch("/api/v1/knowledge/sources/1", json={"reliability_score": 0.4}).json()
+
+    assert body["resync"]["failed"] == 1
+    assert audit_mock.await_args.kwargs["result"] == "FAILED"
+
+
+def test_update_source_404s_when_missing(monkeypatch):
+    monkeypatch.setattr("app.services.knowledge.apply_fact_source_action", AsyncMock(return_value=None))
+
+    response = client.patch("/api/v1/knowledge/sources/99", json={"reliability_score": 0.4})
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("score", [-0.1, 1.5])
+def test_update_source_rejects_an_out_of_range_score(score):
+    response = client.patch("/api/v1/knowledge/sources/1", json={"reliability_score": score})
+
+    assert response.status_code == 422
+
+
+def test_update_source_rejects_an_empty_patch(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge.apply_fact_source_action",
+        AsyncMock(side_effect=ValueError("at least one of reliability_score or is_trusted is required")),
+    )
+
+    response = client.patch("/api/v1/knowledge/sources/1", json={})
+
+    assert response.status_code == 400
 
 
 # --------------------------------------------------------------------------
@@ -338,18 +445,113 @@ def test_import_csv_success_writes_audit_log(monkeypatch):
     assert audit_mock.await_args.kwargs["result"] == "FAILED"
 
 
+# --------------------------------------------------------------------------
+# Routes — automatic ingestion
+# --------------------------------------------------------------------------
+
+
+def test_ingestion_status_route_lists_known_sources(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fact_ingestion.get_ingestion_status",
+        AsyncMock(return_value={"available": True, "sources": [{"slug": "turnbackhoax", "ingested_facts": 12}]}),
+    )
+
+    body = client.get("/api/v1/knowledge/ingestion/status").json()
+
+    assert body["available"] is True
+    assert body["sources"][0]["ingested_facts"] == 12
+    assert "turnbackhoax" in body["known_sources"]
+
+
+def test_ingestion_status_route_degrades_on_db_outage(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fact_ingestion.get_ingestion_status", AsyncMock(side_effect=ConnectionError("db down"))
+    )
+
+    body = client.get("/api/v1/knowledge/ingestion/status").json()
+
+    assert body["available"] is False
+    assert body["reason"] == "database_unavailable"
+
+
+def test_ingestion_runs_route_returns_history(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fact_ingestion.list_ingestion_runs",
+        AsyncMock(return_value={"total": 1, "items": [{"id": "r1", "status": "SUCCESS", "created": 3}]}),
+    )
+
+    body = client.get("/api/v1/knowledge/ingestion/runs").json()
+
+    assert body["available"] is True
+    assert body["items"][0]["created"] == 3
+
+
+def test_trigger_ingestion_enqueues_and_writes_audit_log(monkeypatch):
+    sent: dict[str, object] = {}
+
+    class FakeResult:
+        id = "task-123"
+
+    def fake_send_task(name, **kwargs):
+        sent["name"] = name
+        sent.update(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr("app.worker.celery_app.send_task", fake_send_task)
+    audit_mock = AsyncMock()
+    monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", audit_mock)
+
+    response = client.post("/api/v1/knowledge/ingestion/run", json={"source": "turnbackhoax"})
+
+    assert response.status_code == 202
+    assert response.json()["task_id"] == "task-123"
+    # The route enqueues; the crawl itself never runs inside a request.
+    assert sent["name"] == "app.worker.tasks.ingest_fact_checks"
+    assert sent["kwargs"] == {"source": "turnbackhoax", "triggered_by": "MANUAL"}
+    assert sent["queue"] == "jawara.ingestion"
+    assert audit_mock.await_args.kwargs["action"] == "knowledge.ingestion_triggered"
+
+
+def test_trigger_ingestion_rejects_an_unknown_source():
+    response = client.post("/api/v1/knowledge/ingestion/run", json={"source": "kompas"})
+
+    assert response.status_code == 400
+
+
+def test_trigger_ingestion_reports_a_dead_broker(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr("app.worker.celery_app.send_task", explode)
+
+    response = client.post("/api/v1/knowledge/ingestion/run", json={})
+
+    assert response.status_code == 503
+
+
 def test_create_fact_source_writes_audit_log(monkeypatch):
     monkeypatch.setattr(
         "app.services.knowledge.create_fact_source",
-        AsyncMock(return_value={"id": 2, "name": "Turnbackhoax", "base_url": "https://turnbackhoax.id", "is_trusted": True, "created_at": "2026-08-11T10:00:00+00:00"}),
+        AsyncMock(
+            return_value=_source(
+                id=2, name="Turnbackhoax", base_url="https://turnbackhoax.id", reliability_score=0.95
+            )
+        ),
     )
     audit_mock = AsyncMock()
     monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", audit_mock)
 
     response = client.post(
         "/api/v1/knowledge/sources",
-        json={"name": "Turnbackhoax", "base_url": "https://turnbackhoax.id", "is_trusted": True},
+        json={
+            "name": "Turnbackhoax",
+            "base_url": "https://turnbackhoax.id",
+            "is_trusted": True,
+            "reliability_score": 0.95,
+        },
     )
 
     assert response.status_code == 201
+    assert response.json()["reliability_score"] == 0.95
     assert audit_mock.await_args.kwargs["action"] == "knowledge.source_created"
+    assert audit_mock.await_args.kwargs["metadata"]["reliability_score"] == 0.95

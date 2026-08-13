@@ -1,6 +1,6 @@
 # Production Environment — Full Docker Compose Deployment
 
-Panduan deploy penuh: semua 8 service (`waha`, `api-gateway`, `celery-worker`, `ml-service`, `postgres`, `qdrant`, `redis`, `frontend-dashboard`) jalan sebagai container, orchestrated oleh `docker-compose.yml` di root repo.
+Panduan deploy penuh: semua 9 service (`waha`, `api-gateway`, `celery-worker`, `celery-beat`, `ml-service`, `postgres`, `qdrant`, `redis`, `frontend-dashboard`) jalan sebagai container, orchestrated oleh `docker-compose.yml` di root repo.
 
 > Compose ini **tidak menyediakan reverse proxy atau TLS termination sendiri** — setiap service selain webhook-nya WAHA (`3000` — hanya untuk pairing/QR, lihat §5) sengaja di-bind ke `127.0.0.1`, bukan `0.0.0.0` (§1). Bawa reverse proxy sendiri (Nginx Proxy Manager, Caddy, Traefik, ...) dan hubungkan lewat Docker network, bukan port host yang di-publish.
 
@@ -64,7 +64,7 @@ docker compose up -d --build
 Compose akan start berurutan sesuai `depends_on` + `healthcheck`:
 
 ```
-postgres, redis, qdrant, waha  →  ml-service  →  api-gateway, celery-worker  →  frontend-dashboard
+postgres, redis, qdrant, waha  →  ml-service  →  api-gateway, celery-worker  →  celery-beat, frontend-dashboard
 ```
 
 `ml-service` dicek lewat **readiness** (`GET /v1/ready`, model termuat), bukan liveness — container yang "up" belum tentu "ready", jangan andalkan status container saja.
@@ -77,11 +77,12 @@ postgres, redis, qdrant, waha  →  ml-service  →  api-gateway, celery-worker 
 docker compose ps
 ```
 
-Semua 8 service harus `healthy`. Cek log kalau ada yang `unhealthy`/restart loop:
+Semua service harus `healthy` (`celery-beat` tidak punya healthcheck — scheduler tanpa endpoint; cek lognya). **Persis satu** replika `celery-beat` boleh jalan: dua scheduler menggandakan tiap tick, termasuk crawl cek fakta. Cek log kalau ada yang `unhealthy`/restart loop:
 
 ```bash
 docker compose logs -f api-gateway
 docker compose logs -f celery-worker
+docker compose logs -f celery-beat
 docker compose logs -f ml-service
 docker compose logs -f waha
 ```
@@ -165,7 +166,7 @@ docker compose up -d --build
 docker image prune -f   # buang image lama yang menganggur
 ```
 
-`up -d --build` hanya rebuild image yang berubah (`api-gateway`, `celery-worker` dari `./backend`; `ml-service` dari `./ml-service`; `frontend-dashboard` dari `./frontend`) — service lain (image dari registry: `waha`, `postgres`, `qdrant`, `redis`) tidak kena rebuild.
+`up -d --build` hanya rebuild image yang berubah (`api-gateway`, `celery-worker`, `celery-beat` dari `./backend`; `ml-service` dari `./ml-service`; `frontend-dashboard` dari `./frontend`) — service lain (image dari registry: `waha`, `postgres`, `qdrant`, `redis`) tidak kena rebuild.
 
 Ganti `NEXT_PUBLIC_API_URL`, `CORS_ALLOW_ORIGINS`, atau `LLM_*`/`OPENAI_API_KEY`? `NEXT_PUBLIC_API_URL` wajib `--build frontend-dashboard` (build arg — §2); var lain cukup recreate (`docker compose up -d <service>`), sudah otomatis terjadi lewat `up -d` di atas.
 

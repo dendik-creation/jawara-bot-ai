@@ -57,6 +57,48 @@ class Settings(BaseSettings):
     # Same isolation reasoning, one level down: a long training run shouldn't
     # park evaluation jobs behind it either (06_Model_Evaluation.md).
     celery_evaluation_queue_name: str = "jawara.evaluation"
+    # Fact-check ingestion is network-bound and deliberately slow (it sleeps
+    # between requests to stay polite), so it gets its own queue rather than
+    # sitting in front of a user's WhatsApp message.
+    celery_ingestion_queue_name: str = "jawara.ingestion"
+
+    # Continuous fact-check evidence ingestion (04_AI_and_ML/03_Knowledge_Base.md).
+    # Off means Celery Beat schedules nothing; the manual Control Panel
+    # trigger still works, so this is "stop crawling", not "remove the
+    # feature".
+    fact_ingestion_enabled: bool = True
+    # Comma-separated adapter slugs, in run order. Unknown slugs fail loudly.
+    fact_ingestion_sources: str = "turnbackhoax"
+    # 60 minutes: TurnBackHoax's feed holds only the 10 newest articles and
+    # they publish roughly 5-15 a day, so an hourly poll cannot miss one
+    # between runs while still costing 24 requests a day in the steady state.
+    fact_ingestion_interval_minutes: int = 60
+    # Upper bound on articles considered per run. The feed carries 10; the
+    # cap is what keeps a source that suddenly paginates from turning one
+    # scheduled task into an unbounded crawl.
+    fact_ingestion_max_items: int = 25
+    fact_ingestion_request_timeout_seconds: float = 15.0
+    # Minimum gap between two requests to the same source. Politeness, not
+    # performance: nothing here is on a user-facing latency budget.
+    fact_ingestion_request_delay_seconds: float = 1.5
+    fact_ingestion_max_attempts: int = 3
+    fact_ingestion_retry_backoff_seconds: float = 2.0
+    # Fact-check organisations do edit articles after publishing (a correction,
+    # a stronger ruling). An item already stored is therefore re-read — but at
+    # most once every `refresh_after_hours`, and only while it is younger than
+    # `refresh_window_days`, so the crawl stays roughly one extra request per
+    # article per day instead of re-downloading the feed's whole contents every
+    # hour. 0 hours disables re-checking entirely.
+    fact_ingestion_refresh_after_hours: int = 24
+    fact_ingestion_refresh_window_days: int = 7
+    # Identify the crawler and give the source's operators a way to reach us —
+    # the reason a fact-check organisation tolerates being polled at all.
+    fact_ingestion_user_agent: str = "JAWARA-FactCheckBot/1.0 (+https://github.com/dendik-creation)"
+    # Push newly ingested items through the existing knowledge sync (ML
+    # Service → Qdrant) at the end of a run. False leaves them in PostgreSQL
+    # for an operator to review and sync by hand.
+    fact_ingestion_auto_sync: bool = True
+    turnbackhoax_feed_url: str = "https://turnbackhoax.id/feed"
 
     # Sliding-window webhook rate limit, per (session, chat) pair.
     # 20 req / 60s: a user forwarding a batch of ~10 messages passes untouched,
@@ -98,19 +140,31 @@ class Settings(BaseSettings):
     ml_timeout_classify_seconds: float = 2.0
     ml_timeout_embed_seconds: float = 3.0
     ml_timeout_rag_seconds: float = 3.0
+    # Claim extraction sits in front of retrieval, so its cost is added to the
+    # pipeline before any evidence is read — kept just above ml-service's own
+    # claim_extraction_timeout_seconds so the service's fallback to the
+    # deterministic heuristic wins the race against the client giving up.
+    ml_timeout_extract_claim_seconds: float = 7.0
     ml_timeout_generate_seconds: float = 8.0
-    # /v1/train doesn't exist in ml-service yet (05_Training_Jobs, Planned) — a
-    # short timeout so a training-job task fails fast and honestly instead of
-    # hanging on a route that will never answer.
-    ml_timeout_train_seconds: float = 5.0
-    # /v1/evaluate doesn't exist in ml-service yet either (06_Model_Evaluation,
-    # Planned) — same short-timeout-for-honest-failure reasoning as train.
-    ml_timeout_evaluate_seconds: float = 5.0
+    # train/evaluate run a synchronous scikit-learn fit/predict over the whole
+    # dataset in-process (classifier.py) — not bounded by the <3.0s pipeline
+    # budget above, since these run in the celery training/evaluation queues,
+    # not the message pipeline. Sized for real-world sample counts (thousands
+    # of rows), not just the tiny seed_dataset_samples fixture.
+    ml_timeout_train_seconds: float = 60.0
+    ml_timeout_evaluate_seconds: float = 30.0
     ml_enabled: bool = True
 
     # RAG retrieval contract, fixed by 03_Database/02_VectorDB_Specifications.md.
     rag_top_k: int = 3
     rag_score_threshold: float = 0.80
+    # Canonicalise the message into a claim before retrieving. A forwarded
+    # WhatsApp text and a curated knowledge-base claim describe the same hoax
+    # in very different words, and the embedder scores the wrapper too. False
+    # sends the raw message straight to `rag-query`, the pre-Phase-2
+    # behaviour. Re-ranking weights themselves live in ml-service, which is
+    # where the ranking happens.
+    rag_claim_extraction_enabled: bool = True
 
     # External threat intelligence. Absent keys disable the provider rather than
     # failing the pipeline: a missing key is a configuration state, not an error.
@@ -209,7 +263,17 @@ class Settings(BaseSettings):
             self.waha_api_url = f"http://{self.waha_host}:{self.waha_port}"
         if "ml_service_url" not in set_fields or not self.ml_service_url:
             self.ml_service_url = f"http://{self.ml_service_host}:{self.ml_service_port}"
+        # Compose passes the crawler's User-Agent through with an empty
+        # fallback (a default containing spaces and parentheses is awkward to
+        # express there). An anonymous crawler is worse than a verbose one, so
+        # blank means "use the built-in identifier", never "send nothing".
+        if not self.fact_ingestion_user_agent.strip():
+            self.fact_ingestion_user_agent = type(self).model_fields["fact_ingestion_user_agent"].default
         return self
+
+    @property
+    def fact_ingestion_source_list(self) -> list[str]:
+        return [slug.strip() for slug in self.fact_ingestion_sources.split(",") if slug.strip()]
 
     @property
     def bot_whatsapp_id_list(self) -> list[str]:

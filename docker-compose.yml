@@ -89,12 +89,13 @@ services:
     build: ./backend
     container_name: jawara-worker
     restart: always
-    # -Q jawara.messages,jawara.training,jawara.evaluation: one worker consumes
-    # all three queues — Training Jobs (05_Training_Jobs §6) and Model
-    # Evaluation (06_Model_Evaluation.md) each get their own logical queue so
-    # a long-running job of one kind doesn't park message-pipeline jobs (or
+    # -Q jawara.messages,jawara.training,jawara.evaluation,jawara.ingestion: one
+    # worker consumes all four queues — Training Jobs (05_Training_Jobs §6),
+    # Model Evaluation (06_Model_Evaluation.md) and fact-check ingestion
+    # (03_Knowledge_Base.md) each get their own logical queue so a
+    # long-running job of one kind doesn't park message-pipeline jobs (or
     # each other) behind it, without standing up separate worker processes yet.
-    command: celery -A app.worker worker --loglevel=info -Q jawara.messages,jawara.training,jawara.evaluation
+    command: celery -A app.worker worker --loglevel=info -Q jawara.messages,jawara.training,jawara.evaluation,jawara.ingestion
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - QDRANT_HOST=qdrant
@@ -111,8 +112,25 @@ services:
       - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY}
       - GOOGLE_SAFE_BROWSING_API_KEY=${GOOGLE_SAFE_BROWSING_API_KEY}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - RAG_CLAIM_EXTRACTION_ENABLED=${RAG_CLAIM_EXTRACTION_ENABLED:-true}
       - GROUP_REPLY_REQUIRES_TRIGGER=${GROUP_REPLY_REQUIRES_TRIGGER}
       - BOT_WHATSAPP_IDS=${BOT_WHATSAPP_IDS}
+      # `:-` defaults throughout: these arrived after the first deployments, and
+      # an .env written before them would otherwise inject empty strings, which
+      # fail settings validation and crash-loop the worker.
+      - FACT_INGESTION_ENABLED=${FACT_INGESTION_ENABLED:-true}
+      - FACT_INGESTION_SOURCES=${FACT_INGESTION_SOURCES:-turnbackhoax}
+      - FACT_INGESTION_INTERVAL_MINUTES=${FACT_INGESTION_INTERVAL_MINUTES:-60}
+      - FACT_INGESTION_MAX_ITEMS=${FACT_INGESTION_MAX_ITEMS:-25}
+      - FACT_INGESTION_REQUEST_DELAY_SECONDS=${FACT_INGESTION_REQUEST_DELAY_SECONDS:-1.5}
+      - FACT_INGESTION_REFRESH_AFTER_HOURS=${FACT_INGESTION_REFRESH_AFTER_HOURS:-24}
+      - FACT_INGESTION_REFRESH_WINDOW_DAYS=${FACT_INGESTION_REFRESH_WINDOW_DAYS:-7}
+      - FACT_INGESTION_AUTO_SYNC=${FACT_INGESTION_AUTO_SYNC:-true}
+      # Blank is tolerated (settings fall back to the built-in identifier) —
+      # the User-Agent contains spaces and parentheses, so a Compose-side
+      # default here would be more fragile than the Python one.
+      - FACT_INGESTION_USER_AGENT=${FACT_INGESTION_USER_AGENT:-}
+      - TURNBACKHOAX_FEED_URL=${TURNBACKHOAX_FEED_URL:-https://turnbackhoax.id/feed}
       - LOG_MESSAGE_CONTENT=${LOG_MESSAGE_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL}
     depends_on:
@@ -132,6 +150,35 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+
+  celery-beat:
+    build: ./backend
+    container_name: jawara-beat
+    restart: always
+    # Scheduler only — it enqueues, it never executes. Exactly one replica may
+    # run: a second Beat would double every tick, and the fact-check crawl
+    # would poll the source twice as often as the source was told to expect.
+    # --schedule writes the last-run-at file into /tmp so a restart doesn't
+    # replay a tick it already fired.
+    command: celery -A app.worker beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      # The beat schedule is built from these at startup (see
+      # app/worker/celery_app.py::_beat_schedule) — changing the interval
+      # means restarting this container, not editing code.
+      - FACT_INGESTION_ENABLED=${FACT_INGESTION_ENABLED:-true}
+      - FACT_INGESTION_INTERVAL_MINUTES=${FACT_INGESTION_INTERVAL_MINUTES:-60}
+      - LOG_LEVEL=${LOG_LEVEL}
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery-worker:
+        condition: service_healthy
+    networks:
+      - jawara-net
 
   ml-service:
     build: ./ml-service
@@ -154,6 +201,15 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL}
       - LLM_API_KEY=${LLM_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Retrieval quality. `:-` defaults for the same reason the ingestion vars
+      # carry them: an .env written before this feature must not inject empty
+      # strings and crash-loop the service on settings validation.
+      - CLAIM_EXTRACTION_PROVIDER=${CLAIM_EXTRACTION_PROVIDER:-auto}
+      - CLAIM_EXTRACTION_MIN_INPUT_CHARS=${CLAIM_EXTRACTION_MIN_INPUT_CHARS:-180}
+      - RAG_RERANK_ENABLED=${RAG_RERANK_ENABLED:-true}
+      - RAG_RELIABILITY_WEIGHT=${RAG_RELIABILITY_WEIGHT:-0.4}
+      - RAG_RECENCY_WEIGHT=${RAG_RECENCY_WEIGHT:-0.25}
+      - RAG_RECENCY_HALF_LIFE_DAYS=${RAG_RECENCY_HALF_LIFE_DAYS:-180}
       - LOG_LEVEL=${LOG_LEVEL}
       - MODEL_ARTIFACT_DIR=/app/model_artifacts
     volumes:

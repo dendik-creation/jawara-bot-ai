@@ -24,7 +24,7 @@ from app.core.config import Settings, get_settings
 
 logger = logging.getLogger("app.clients.ml")
 
-IDEMPOTENT_ENDPOINTS = frozenset({"classify", "embed", "rag-query"})
+IDEMPOTENT_ENDPOINTS = frozenset({"classify", "embed", "rag-query", "extract-claim"})
 
 
 class MlServiceError(Exception):
@@ -67,6 +67,7 @@ class MlClient:
             "classify": self._settings.ml_timeout_classify_seconds,
             "embed": self._settings.ml_timeout_embed_seconds,
             "rag-query": self._settings.ml_timeout_rag_seconds,
+            "extract-claim": self._settings.ml_timeout_extract_claim_seconds,
             "generate": self._settings.ml_timeout_generate_seconds,
             "train": self._settings.ml_timeout_train_seconds,
             "evaluate": self._settings.ml_timeout_evaluate_seconds,
@@ -142,6 +143,16 @@ class MlClient:
 
     async def embed(self, request_id: str, texts: list[str]) -> MlResponse:
         return await self._post("embed", request_id, {"texts": texts})
+
+    async def extract_claim(self, request_id: str, text: str, category: str | None = None) -> MlResponse:
+        """Canonicalise a forwarded message into one claim sentence.
+
+        Runs before `rag_query` so retrieval matches on the claim rather than
+        on the chain-letter wrapper around it. Idempotent and cheap to retry:
+        ml-service falls back to a deterministic heuristic rather than failing,
+        so the only errors that reach here are transport ones.
+        """
+        return await self._post("extract-claim", request_id, {"text": text, "category": category})
 
     async def rag_query(
         self,

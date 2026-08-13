@@ -68,6 +68,38 @@ async def test_client_error_is_not_retried(monkeypatch):
     assert result.error == "http_422"
 
 
+async def test_get_message_text_hits_the_documented_endpoint(monkeypatch):
+    calls = patch_httpx(
+        monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(200, {"body": "cek info ini ya"})
+    )
+    text = await WahaClient(waha_settings()).get_message_text("default", CHAT_ID, "false_x_1")
+
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"] == f"http://waha:3000/api/default/chats/{CHAT_ID}/messages/false_x_1"
+    assert text == "cek info ini ya"
+
+
+async def test_get_message_text_returns_none_when_not_found(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(404))
+    text = await WahaClient(waha_settings()).get_message_text("default", CHAT_ID, "gone")
+
+    assert text is None
+
+
+async def test_get_message_text_returns_none_on_transport_failure(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", raise_timeout)
+    text = await WahaClient(waha_settings()).get_message_text("default", CHAT_ID, "x")
+
+    assert text is None
+
+
+async def test_get_message_text_returns_none_for_blank_body(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(200, {"body": "   "}))
+    text = await WahaClient(waha_settings()).get_message_text("default", CHAT_ID, "x")
+
+    assert text is None
+
+
 async def test_server_error_is_retried(monkeypatch):
     calls = patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(500))
     await WahaClient(waha_settings()).send_text(CHAT_ID, REPLY)

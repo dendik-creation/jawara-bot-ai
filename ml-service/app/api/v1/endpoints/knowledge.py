@@ -84,6 +84,17 @@ async def upsert_knowledge(
                     "verdict": item.get("verdict", "UNVERIFIED"),
                     "source_name": item.get("source_name", ""),
                     "source_url": item.get("source_url", ""),
+                    # Provenance and freshness of automatically ingested
+                    # fact-checks. Empty for hand-entered facts, which have
+                    # no external identity and no source publication date —
+                    # absent rather than back-filled with the ingestion clock.
+                    "external_id": item.get("external_id") or "",
+                    "published_at": item.get("published_at"),
+                    # Denormalised from `fact_sources.reliability_score`: the
+                    # re-ranker runs here, and this service has no database to
+                    # join against. Re-syncing a source's facts is what
+                    # republishes a changed score (services/knowledge.py).
+                    "source_reliability": item.get("source_reliability"),
                     "is_active": bool(item.get("is_active", True)),
                     "updated_at": item.get("updated_at"),
                 },

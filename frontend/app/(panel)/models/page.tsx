@@ -6,7 +6,7 @@ export default function ModelsPage() {
     <div className="flex flex-col gap-6">
       <PageTitle
         title="Models"
-        description="Lifecycle CANDIDATE → VALIDATED → PRODUCTION → ARCHIVED — baris muncul otomatis begitu evaluasi selesai (07_Model_Registry_and_Deployment, Planned)."
+        description="Registry model dengan lifecycle CANDIDATE → VALIDATED → PRODUCTION → ARCHIVED — baris muncul otomatis begitu evaluasi selesai."
       />
 
       <ModelVersionList />

@@ -6,7 +6,7 @@ export default function TrainingJobsPage() {
     <div className="flex flex-col gap-6">
       <PageTitle
         title="Training Jobs"
-        description="Operasi asinkron terkontrol atas dataset VALIDATED — eksekusi ML Service belum diimplementasikan (05_Training_Jobs, Planned)."
+        description="Operasi asinkron terkontrol atas dataset VALIDATED — memicu training model via ML Service dan melacak status hingga selesai."
       />
 
       <TrainingJobList />

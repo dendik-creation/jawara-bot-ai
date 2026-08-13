@@ -1,6 +1,6 @@
 # Model Registry & Deployment Lifecycle
 
-> **Scope:** MVP · **Status:** Planned
+> **Scope:** MVP · **Status:** Implemented
 
 Registry adalah catatan resmi setiap model: versinya, asalnya, hasil evaluasinya, dan statusnya.
 

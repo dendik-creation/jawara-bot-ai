@@ -40,3 +40,34 @@ class FactSourceCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
     is_trusted: bool = True
+    # Omitted means the column default (0.80) — an unscored source sits just
+    # below one an operator has explicitly vouched for.
+    reliability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class FactSourceUpdateRequest(BaseModel):
+    """Trust settings an operator may change on an existing source.
+
+    Both optional, at least one required — enforced in the service, which is
+    where the same "an update must update something" rule already lives for
+    fact items.
+    """
+
+    reliability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    is_trusted: bool | None = None
+    # Reliability is denormalised into Qdrant payloads at sync time, so a score
+    # change only reaches retrieval once this source's facts are re-synced.
+    # Default true: the surprising behaviour would be an edit that silently
+    # does nothing to retrieval.
+    resync: bool = True
+
+
+class IngestionRunRequest(BaseModel):
+    """Manual trigger for the scheduled fact-check ingestion.
+
+    `source` is an adapter slug (`turnbackhoax`); omitted means every
+    configured source. Validated against the registry in the route, not here
+    — the set of known sources is a runtime fact, not a wire-level one.
+    """
+
+    source: str | None = None

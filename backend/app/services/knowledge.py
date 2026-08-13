@@ -56,9 +56,12 @@ SELECT
     fi.fact_explanation,
     fi.verdict::text   AS verdict,
     fi.source_url,
+    fi.external_id,
+    fi.published_at,
     fi.is_active,
     fi.updated_at,
-    coalesce(fs.name, '') AS source_name
+    coalesce(fs.name, '') AS source_name,
+    fs.reliability_score
 FROM fact_items fi
 LEFT JOIN fact_sources fs ON fs.id = fi.source_id
 WHERE ($1::boolean OR fi.is_active = TRUE)
@@ -265,6 +268,20 @@ async def apply_fact_item_action(
 async def fetch_facts_for_sync(
     conn: asyncpg.Connection, *, only_ids: list[str] | None = None, include_inactive: bool = True
 ) -> list[dict[str, Any]]:
+    """Rows in the shape `/v1/kb/upsert` expects.
+
+    `source_name`/`source_url` are the provenance the LLM cites through the
+    existing evidence mechanism; `external_id`/`published_at` ride along so a
+    retrieved point can be traced back to the source's own article and dated
+    without a round trip to PostgreSQL. Automatically ingested facts and
+    hand-entered ones travel this same path — the extra fields are simply
+    empty for the latter.
+
+    `source_reliability` is denormalised out of `fact_sources` for the same
+    reason: ml-service re-ranks retrieved matches by it and has no database to
+    join against. That makes re-sync the mechanism by which a changed score
+    reaches retrieval — see `apply_fact_source_action`.
+    """
     rows = await conn.fetch(SELECT_FACTS_FOR_SYNC, include_inactive, only_ids)
     return [
         {
@@ -276,6 +293,11 @@ async def fetch_facts_for_sync(
             "verdict": row["verdict"],
             "source_name": row["source_name"],
             "source_url": row["source_url"],
+            "external_id": row["external_id"],
+            "published_at": row["published_at"].isoformat() if row["published_at"] else None,
+            "source_reliability": (
+                float(row["reliability_score"]) if row["reliability_score"] is not None else None
+            ),
             "is_active": row["is_active"],
             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         }
@@ -351,50 +373,138 @@ async def sync_fact_items(
         await conn.close()
 
 
+SOURCE_COLUMNS = "id, name, base_url, slug, is_trusted, reliability_score, created_at"
+
+
+def _row_to_source(row: asyncpg.Record) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "base_url": row["base_url"],
+        "slug": row["slug"],
+        "is_trusted": row["is_trusted"],
+        "reliability_score": float(row["reliability_score"]),
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+    }
+
+
 async def list_fact_sources(settings: Settings | None = None) -> list[dict[str, Any]]:
     settings = settings or get_settings()
     conn = await _connect(settings)
     try:
-        rows = await conn.fetch("SELECT id, name, base_url, is_trusted, created_at FROM fact_sources ORDER BY name")
+        rows = await conn.fetch(
+            f"""
+            SELECT {SOURCE_COLUMNS},
+                   (SELECT count(*) FROM fact_items fi WHERE fi.source_id = fs.id) AS fact_count,
+                   (SELECT count(*) FROM fact_items fi
+                     WHERE fi.source_id = fs.id AND fi.synced_at IS NOT NULL AND fi.sync_error IS NULL
+                   ) AS synced_count
+            FROM fact_sources fs
+            ORDER BY name
+            """
+        )
     finally:
         await conn.close()
     return [
-        {
-            "id": row["id"],
-            "name": row["name"],
-            "base_url": row["base_url"],
-            "is_trusted": row["is_trusted"],
-            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-        }
+        # `fact_count`/`synced_count` answer the question a reliability edit
+        # immediately raises: how many facts carry this score, and how many of
+        # them still hold the old one in Qdrant.
+        {**_row_to_source(row), "fact_count": row["fact_count"], "synced_count": row["synced_count"]}
         for row in rows
     ]
 
 
 async def create_fact_source(
-    name: str, base_url: str, is_trusted: bool, settings: Settings | None = None
+    name: str,
+    base_url: str,
+    is_trusted: bool,
+    reliability_score: float | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
     conn = await _connect(settings)
     try:
         row = await conn.fetchrow(
-            """
-            INSERT INTO fact_sources (name, base_url, is_trusted)
-            VALUES ($1, $2, $3)
-            RETURNING id, name, base_url, is_trusted, created_at
+            f"""
+            INSERT INTO fact_sources (name, base_url, is_trusted, reliability_score)
+            VALUES ($1, $2, $3, coalesce($4::numeric, 0.80))
+            RETURNING {SOURCE_COLUMNS}
             """,
             name,
             base_url,
             is_trusted,
+            reliability_score,
         )
     finally:
         await conn.close()
+    return _row_to_source(row)
+
+
+async def apply_fact_source_action(
+    source_id: int,
+    *,
+    reliability_score: float | None = None,
+    is_trusted: bool | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any] | None:
+    """Update a source's trust settings. `None` if it doesn't exist.
+
+    The returned dict carries `previous_reliability` for the route's audit
+    call, and `stale_in_qdrant` — the number of this source's facts already
+    synced under the old score. That number is not cosmetic: reliability is
+    denormalised into each fact's Qdrant payload at sync time, so an operator
+    who lowers a score and walks away has changed nothing about retrieval
+    until those facts are re-synced. Saying so is better than a silent
+    half-applied change.
+    """
+    settings = settings or get_settings()
+
+    if reliability_score is None and is_trusted is None:
+        raise ValueError("at least one of reliability_score or is_trusted is required")
+    if reliability_score is not None and not 0.0 <= reliability_score <= 1.0:
+        raise ValueError("reliability_score must be between 0 and 1")
+
+    conn = await _connect(settings)
+    try:
+        current = await conn.fetchrow("SELECT reliability_score FROM fact_sources WHERE id = $1", source_id)
+        if current is None:
+            return None
+
+        row = await conn.fetchrow(
+            f"""
+            UPDATE fact_sources
+            SET reliability_score = coalesce($2::numeric, reliability_score),
+                is_trusted = coalesce($3::boolean, is_trusted)
+            WHERE id = $1
+            RETURNING {SOURCE_COLUMNS}
+            """,
+            source_id,
+            reliability_score,
+            is_trusted,
+        )
+        stale = await conn.fetchval(
+            "SELECT count(*) FROM fact_items WHERE source_id = $1 AND synced_at IS NOT NULL", source_id
+        )
+    finally:
+        await conn.close()
+
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "base_url": row["base_url"],
-        "is_trusted": row["is_trusted"],
-        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        **_row_to_source(row),
+        "previous_reliability": float(current["reliability_score"]),
+        "stale_in_qdrant": stale,
     }
+
+
+async def fact_item_ids_for_source(source_id: int, settings: Settings | None = None) -> list[str]:
+    """Every fact item belonging to one source — the re-sync set after a
+    reliability change."""
+    settings = settings or get_settings()
+    conn = await _connect(settings)
+    try:
+        rows = await conn.fetch("SELECT id::text AS id FROM fact_items WHERE source_id = $1", source_id)
+    finally:
+        await conn.close()
+    return [row["id"] for row in rows]
 
 
 async def import_fact_items_csv(

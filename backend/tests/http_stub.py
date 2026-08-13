@@ -15,10 +15,19 @@ import httpx
 
 
 class FakeResponse:
-    def __init__(self, status_code: int = 200, json_data: Any = None, text: str = "") -> None:
+    def __init__(
+        self,
+        status_code: int = 200,
+        json_data: Any = None,
+        text: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._json = json_data
         self.text = text or ""
+        # Some clients read response headers (Retry-After on a 429); an empty
+        # mapping keeps the stub usable for the ones that don't.
+        self.headers = headers or {}
 
     def json(self) -> Any:
         if self._json is None:

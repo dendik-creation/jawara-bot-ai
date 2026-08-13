@@ -87,6 +87,15 @@ search_result = client.search(
 )
 ```
 
+> **Threshold dan filter di atas tetap kontrak yang berlaku.** Sejak
+> [[03_Knowledge_Base]] §9, `search()` diminta `top_k x 3` kandidat dan
+> hasilnya diurutkan ulang oleh ml-service berdasarkan reliabilitas sumber dan
+> kesegaran (`app/rag/ranking.py`). Re-ranking **hanya mengubah urutan dan
+> memotong ke `top_k`** — ia tidak pernah mengubah match mana yang lolos
+> ambang 0.80, dan `score` yang tercatat di audit row tetap cosine similarity
+> mentah. Angka turunan dikirim terpisah sebagai `rerank_score`,
+> `reliability`, dan `age_days`.
+
 ---
 
 ## 4. RAG Retrieval Pipeline Diagram
@@ -97,7 +106,9 @@ flowchart LR
     E --> V[Vector Embedding 1536-dim]
     V --> QDB[(Qdrant Vector DB)]
 
-    QDB -->|Cos Similarity >= 0.80| TOPK[Top-K Fact Contexts]
+    QDB -->|Cos Similarity >= 0.80| CAND[Kandidat top_k x 3]
+    CAND --> RR[Re-ranking: reliability x recency]
+    RR --> TOPK[Top-K Fact Contexts]
     TOPK --> PROMPT[System Prompt Assembler]
     PROMPT --> LLM[LLM Generator]
     LLM --> OUT[WhatsApp Markdown Output]

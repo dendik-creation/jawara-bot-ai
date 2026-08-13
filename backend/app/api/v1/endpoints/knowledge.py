@@ -11,10 +11,19 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
+from app.core.config import get_settings
 from app.core.security import require_operator
-from app.schemas.knowledge import FactItemActionRequest, FactItemCreateRequest, FactSourceCreateRequest
-from app.services import knowledge
+from app.ingestion import available_sources
+from app.schemas.knowledge import (
+    FactItemActionRequest,
+    FactItemCreateRequest,
+    FactSourceCreateRequest,
+    FactSourceUpdateRequest,
+    IngestionRunRequest,
+)
+from app.services import fact_ingestion, knowledge
 from app.services.audit import record_audit
 from app.services.auth import Operator
 
@@ -224,6 +233,82 @@ async def import_fact_items_csv(
     return result
 
 
+# --------------------------------------------------------------------------
+# Automatic ingestion — observability and manual trigger
+#
+# The crawl itself always runs in the Celery worker, never in the request:
+# this route enqueues, it does not scrape. Read routes degrade the same way
+# the list routes above do, so a database hiccup greys out one card instead
+# of failing the page.
+# --------------------------------------------------------------------------
+
+
+@router.get("/knowledge/ingestion/status")
+async def ingestion_status() -> dict[str, object]:
+    try:
+        return {**(await fact_ingestion.get_ingestion_status()), "known_sources": available_sources()}
+    except Exception:  # noqa: BLE001
+        logger.error("ingestion status query failed", exc_info=True)
+        return {"available": False, "reason": "database_unavailable", "sources": []}
+
+
+@router.get("/knowledge/ingestion/runs")
+async def list_ingestion_runs(
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    source: str | None = Query(default=None),
+) -> dict[str, object]:
+    try:
+        return {
+            "available": True,
+            **(await fact_ingestion.list_ingestion_runs(limit, offset, source_slug=source)),
+        }
+    except Exception:  # noqa: BLE001
+        logger.error("ingestion runs query failed", exc_info=True)
+        return {"available": False, "reason": "database_unavailable", "items": [], "total": 0}
+
+
+@router.post("/knowledge/ingestion/run", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_ingestion(
+    payload: IngestionRunRequest, request: Request, operator: Operator = Depends(require_operator)
+) -> dict[str, object]:
+    known = available_sources()
+    if payload.source and payload.source not in known:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"sumber tidak dikenal: {payload.source} (tersedia: {', '.join(known)})",
+        )
+
+    from app.worker import TASK_INGEST_FACT_CHECKS, celery_app
+
+    settings = get_settings()
+    try:
+        result = await run_in_threadpool(
+            celery_app.send_task,
+            TASK_INGEST_FACT_CHECKS,
+            kwargs={"source": payload.source, "triggered_by": "MANUAL"},
+            queue=settings.celery_ingestion_queue_name,
+        )
+        task_id = result.id
+    except Exception:  # noqa: BLE001
+        logger.error("failed to dispatch ingestion task", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="antrean tidak tersedia"
+        ) from None
+
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="knowledge.ingestion_triggered",
+        target_type="fact_source",
+        target_id=payload.source,
+        result="SUCCESS",
+        metadata={"source": payload.source or "all", "task_id": task_id},
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"queued": True, "task_id": task_id, "source": payload.source or "all"}
+
+
 @router.get("/knowledge/sources")
 async def list_fact_sources() -> dict[str, object]:
     try:
@@ -237,7 +322,9 @@ async def list_fact_sources() -> dict[str, object]:
 async def create_fact_source(
     payload: FactSourceCreateRequest, request: Request, operator: Operator = Depends(require_operator)
 ) -> dict[str, object]:
-    result = await knowledge.create_fact_source(payload.name, payload.base_url, payload.is_trusted)
+    result = await knowledge.create_fact_source(
+        payload.name, payload.base_url, payload.is_trusted, payload.reliability_score
+    )
 
     await record_audit(
         actor_operator_id=operator.id,
@@ -245,8 +332,69 @@ async def create_fact_source(
         target_type="fact_source",
         target_id=str(result["id"]),
         result="SUCCESS",
-        metadata={"name": payload.name, "base_url": payload.base_url, "is_trusted": payload.is_trusted},
+        metadata={
+            "name": payload.name,
+            "base_url": payload.base_url,
+            "is_trusted": payload.is_trusted,
+            "reliability_score": result["reliability_score"],
+        },
         ip_address=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
     return result
+
+
+@router.patch("/knowledge/sources/{source_id}")
+async def update_fact_source(
+    source_id: int,
+    payload: FactSourceUpdateRequest,
+    request: Request,
+    operator: Operator = Depends(require_operator),
+) -> dict[str, object]:
+    """Change a source's reliability score / trust flag.
+
+    The score is denormalised into every one of this source's facts inside
+    Qdrant, so unless `resync` is false the affected facts are pushed back
+    through the existing sync path here — an edit that changed nothing about
+    retrieval would be worse than no edit at all. A failed re-sync is reported,
+    not hidden: the score change itself has already committed.
+    """
+    try:
+        result = await knowledge.apply_fact_source_action(
+            source_id,
+            reliability_score=payload.reliability_score,
+            is_trusted=payload.is_trusted,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
+
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="fact source not found")
+
+    previous = result.pop("previous_reliability", None)
+    resync: dict[str, object] | None = None
+    if payload.resync and payload.reliability_score is not None:
+        ids = await knowledge.fact_item_ids_for_source(source_id)
+        if ids:
+            try:
+                resync = await knowledge.sync_fact_items(ids)
+            except Exception as error:  # noqa: BLE001 — the score change stands either way
+                logger.error("resync after reliability change failed", exc_info=True)
+                resync = {"failed": len(ids), "error": type(error).__name__}
+
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="knowledge.source_updated",
+        target_type="fact_source",
+        target_id=str(source_id),
+        result="SUCCESS" if not (resync and resync.get("failed")) else "FAILED",
+        metadata={
+            "previous_reliability": previous,
+            "reliability_score": result["reliability_score"],
+            "is_trusted": result["is_trusted"],
+            "resync": resync,
+        },
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {**result, "resync": resync}

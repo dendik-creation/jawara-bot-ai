@@ -114,3 +114,37 @@ async def test_ready_probe_never_raises(monkeypatch):
 
     assert ready is False
     assert "error" in detail
+
+
+async def test_extract_claim_sends_the_documented_envelope(monkeypatch):
+    calls = patch_httpx(
+        monkeypatch, "app.clients.ml_client", lambda **_: ok({"claim": "klaim", "method": "llm"})
+    )
+    response = await MlClient(ml_settings()).extract_claim(
+        REQUEST_ID, "pesan panjang yang diteruskan", category="HEALTH_HOAX"
+    )
+
+    assert calls[0]["url"] == "http://ml-service:9000/v1/extract-claim"
+    assert calls[0]["json"]["payload"] == {
+        "text": "pesan panjang yang diteruskan",
+        "category": "HEALTH_HOAX",
+    }
+    assert response.result["claim"] == "klaim"
+
+
+async def test_extract_claim_is_retried_like_the_other_idempotent_calls(monkeypatch):
+    """Extraction has no side effect — unlike `generate`, a second attempt
+    costs a little latency and nothing else."""
+    attempts: list[int] = []
+
+    def flaky(**_):
+        attempts.append(1)
+        if len(attempts) == 1:
+            return FakeResponse(503, {"error_code": "busy", "message": "later", "retryable": True})
+        return ok({"claim": "klaim", "method": "heuristic"})
+
+    patch_httpx(monkeypatch, "app.clients.ml_client", flaky)
+    response = await MlClient(ml_settings()).extract_claim(REQUEST_ID, "teks")
+
+    assert len(attempts) == 2
+    assert response.result["method"] == "heuristic"

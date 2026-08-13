@@ -14,11 +14,16 @@ from app.clients.waha_client import SendResult
 from app.core.config import Settings
 from app.pipeline import orchestrator
 from app.pipeline.categories import RiskLevel
+from app.pipeline.normalizer import normalize_text
 from app.pipeline.url_safety import UrlRisk, UrlScanResult
 from app.schemas.queue import MessageJob
 
 HOAX_TEXT = "Tolong cek berita ini: air rebusan daun kitolod bisa sembuhkan katarak tanpa operasi"
 PHISHING_TEXT = "Benar gak link ini http://bansos-pemerintah-2026.com buat klaim bantuan 2 juta?"
+
+# What reaches claim extraction and retrieval: normalisation (stage 4) runs
+# before either of them.
+NORMALIZED_HOAX = normalize_text(HOAX_TEXT).text
 
 KB_MATCH = {
     "fact_item_id": "c39a04f2-5b9e-4a6c-9407-1d82136e0510",
@@ -52,6 +57,9 @@ class FakeMlClient:
         message="reply",
         classify_result=None,
         classify_error=None,
+        claim=None,
+        claim_error=None,
+        reranked=True,
     ):
         self._matches = matches or []
         self._rag_error = rag_error
@@ -59,15 +67,31 @@ class FakeMlClient:
         self._message = message
         self._classify_result = classify_result
         self._classify_error = classify_error
+        self._claim = claim
+        self._claim_error = claim_error
+        self._reranked = reranked
         self.generate_calls: list[dict] = []
         self.rag_calls: list[str] = []
         self.classify_calls: list[dict] = []
+        self.claim_calls: list[str] = []
+
+    async def extract_claim(self, request_id, text, category=None):
+        self.claim_calls.append(text)
+        if self._claim_error:
+            raise self._claim_error
+        # Default: the service's "message is already a claim" passthrough, so
+        # tests that don't care about extraction see the text they wrote.
+        claim = self._claim if self._claim is not None else text
+        method = "llm" if self._claim is not None else "passthrough"
+        return MlResponse(request_id, {"claim": claim, "method": method}, "claim-stub-v1")
 
     async def rag_query(self, request_id, query, category=None, **_):
         self.rag_calls.append(query)
         if self._rag_error:
             raise self._rag_error
-        return MlResponse(request_id, {"matches": self._matches}, "hash-embed-v0")
+        return MlResponse(
+            request_id, {"matches": self._matches, "reranked": self._reranked}, "hash-embed-v0"
+        )
 
     async def classify(self, request_id, text, model_version, expected_sha256):
         self.classify_calls.append(
@@ -94,11 +118,13 @@ class FakeMlClient:
 
 
 class FakeWaha:
-    def __init__(self, delivered: bool = True, bot_ids: frozenset[str] = frozenset()):
+    def __init__(self, delivered: bool = True, bot_ids: frozenset[str] = frozenset(), quoted_text: str | None = None):
         self.delivered = delivered
         self.sent: list[tuple[str, str]] = []
         self.quoted: list[str | None] = []
         self._bot_ids = bot_ids
+        self._quoted_text = quoted_text
+        self.get_message_calls: list[dict] = []
 
     async def send_text(self, chat_id, text, session="default", reply_to=None):
         self.sent.append((chat_id, text))
@@ -107,6 +133,10 @@ class FakeWaha:
 
     async def session_identity(self, session):
         return self._bot_ids
+
+    async def get_message_text(self, session, chat_id, message_id):
+        self.get_message_calls.append({"session": session, "chat_id": chat_id, "message_id": message_id})
+        return self._quoted_text
 
 
 class FakeRedis:
@@ -229,6 +259,80 @@ async def test_no_knowledge_match_is_unverified_not_a_weak_match(rig):
     assert "knowledge_unverified" in result["degradations"]
 
 
+# --------------------------------------------------------------------------
+# Claim extraction ahead of retrieval
+# --------------------------------------------------------------------------
+
+
+async def test_retrieval_queries_the_extracted_claim_not_the_raw_forward(rig):
+    """The point of the step: a chain letter's greeting and "TOLONG
+    SEBARKAN!!!" are embedded too, and they pull the vector away from the
+    curated claim the knowledge base stores."""
+    claim = "Air rebusan daun kitolod menyembuhkan katarak tanpa operasi."
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH], claim=claim))
+
+    result = await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert state["ml"].claim_calls == [NORMALIZED_HOAX]
+    assert state["ml"].rag_calls == [claim]
+    assert result["claim_method"] == "llm"
+    assert result["reranked"] is True
+
+
+async def test_generation_still_sees_the_user_text_not_the_claim(rig):
+    """Extraction improves *retrieval*. The reply still quotes what the user
+    actually sent — replying to a rewritten version reads as a broken bot."""
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH], claim="Klaim ringkas."))
+
+    await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert state["ml"].generate_calls[0]["user_text"] == HOAX_TEXT
+
+
+async def test_claim_extraction_failure_falls_back_to_the_raw_text(rig):
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH], claim_error=MlServiceError("ml_timeout", "slow", True)))
+
+    result = await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    # Retrieval still happened, on the unprocessed message.
+    assert state["ml"].rag_calls == [NORMALIZED_HOAX]
+    assert result["match_count"] == 1
+    assert any(d.startswith("claim_extraction_unavailable") for d in result["degradations"])
+
+
+async def test_an_empty_extraction_is_ignored_rather_than_queried(rig):
+    """An empty query would embed to noise and retrieve nonsense — worse than
+    not extracting at all."""
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH], claim="   "))
+
+    await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    assert state["ml"].rag_calls == [NORMALIZED_HOAX]
+
+
+async def test_claim_extraction_can_be_switched_off(rig):
+    state = rig(ml=FakeMlClient(matches=[KB_MATCH], claim="Klaim ringkas."))
+    settings = Settings(
+        user_hash_salt="test-salt", end_to_end_target_ms=3000, rag_claim_extraction_enabled=False
+    )
+
+    result = await orchestrator.process_message_job(job(), {}, settings)
+
+    assert state["ml"].claim_calls == []
+    assert state["ml"].rag_calls == [NORMALIZED_HOAX]
+    assert result["claim_method"] is None
+
+
+async def test_url_safety_path_never_pays_for_claim_extraction(rig):
+    """Extraction belongs to text verification. A phishing link is checked by
+    reputation providers, and an LLM round trip there is pure latency."""
+    state = rig(ml=FakeMlClient(claim="tidak dipakai"))
+
+    await orchestrator.process_message_job(job(PHISHING_TEXT), {}, SETTINGS)
+
+    assert state["ml"].claim_calls == []
+
+
 async def test_audit_row_carries_intent_risk_latency_and_hashed_user(rig):
     state = rig(ml=FakeMlClient(matches=[KB_MATCH]))
     message = job()
@@ -295,6 +399,66 @@ async def test_direct_chat_reply_is_not_quoted(rig):
     await orchestrator.process_message_job(job(), {}, SETTINGS)
 
     assert state["waha"].quoted == [None]
+
+
+async def test_bare_reply_fetches_and_analyses_the_quoted_message(rig):
+    """A reply with no new text of its own — the quoted message *is* the ask."""
+    quoted = "Air rebusan daun kitolod bisa sembuhkan katarak tanpa operasi, sudah terbukti klinis"
+    ml = FakeMlClient(matches=[KB_MATCH])
+    waha = FakeWaha(quoted_text=quoted)
+    rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        job("", replyTo={"id": "orig-msg-1"}), {}, SETTINGS
+    )
+
+    assert waha.get_message_calls[0]["message_id"] == "orig-msg-1"
+    assert ml.generate_calls[0]["user_text"] == quoted
+    assert result["status"] == "processed"
+
+
+async def test_reply_with_own_text_folds_quoted_message_in_first(rig):
+    quoted = "Air rebusan daun kitolod bisa sembuhkan katarak tanpa operasi"
+    ml = FakeMlClient(matches=[KB_MATCH])
+    waha = FakeWaha(quoted_text=quoted)
+    rig(ml=ml, waha=waha)
+
+    await orchestrator.process_message_job(
+        job("apa ini beneran?", replyTo={"id": "orig-msg-1"}), {}, SETTINGS
+    )
+
+    assert ml.generate_calls[0]["user_text"] == f"{quoted}\n\napa ini beneran?"
+
+
+async def test_quoted_message_unavailable_degrades_without_failing(rig):
+    """WAHA can't produce the quoted text (deleted, pre-pairing) — degrade, don't drop."""
+    ml = FakeMlClient(matches=[])
+    waha = FakeWaha(quoted_text=None)
+    rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        job("tolong cek ya", replyTo={"id": "orig-msg-1"}), {}, SETTINGS
+    )
+
+    assert "quoted_message_unavailable" in result["degradations"]
+    assert ml.generate_calls[0]["user_text"] == "tolong cek ya"
+
+
+async def test_group_bare_mention_with_quoted_message_is_not_treated_as_empty(rig):
+    """'@JAWARA' on a reply is a complete request once the quote resolves."""
+    quoted = "Klik link ini buat klaim bansos 2 juta sebelum kuota habis"
+    ml = FakeMlClient(matches=[])
+    waha = FakeWaha(bot_ids=BOT_IDS, quoted_text=quoted)
+    rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        group_job(text="@6287712032005", mentionedIds=["6287712032005@c.us"], replyTo={"id": "orig-msg-2"}),
+        {},
+        SETTINGS,
+    )
+
+    assert result["status"] != "mention_without_content"
+    assert ml.generate_calls[0]["user_text"] == quoted
 
 
 async def test_bot_mention_is_not_analysed_as_message_content(rig):

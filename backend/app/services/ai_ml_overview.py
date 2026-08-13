@@ -61,6 +61,22 @@ async def _knowledge_base_stats(settings: Settings) -> dict[str, Any]:
     }
 
 
+async def _fact_ingestion_stats(settings: Settings) -> dict[str, Any]:
+    """Automatic fact-check ingestion health.
+
+    Read through `services.fact_ingestion` rather than re-querying the tables
+    here: the "when did it last run / last succeed / what failed" shape is
+    already defined there, and two implementations of it would drift.
+    """
+    try:
+        from app.services.fact_ingestion import get_ingestion_status
+
+        return await get_ingestion_status(settings)
+    except Exception:  # noqa: BLE001
+        logger.error("fact ingestion overview query failed", exc_info=True)
+        return {"available": False, "reason": "database_unavailable"}
+
+
 async def _status_breakdown(table: str, settings: Settings) -> dict[str, Any]:
     try:
         conn = await _connect(settings)
@@ -136,6 +152,7 @@ async def get_overview(settings: Settings | None = None) -> dict[str, Any]:
 
     return {
         "knowledge_base": await _knowledge_base_stats(settings),
+        "fact_ingestion": await _fact_ingestion_stats(settings),
         "detection_rules": await _status_breakdown("detection_rules", settings),
         "policies": await _status_breakdown("policies", settings),
         "datasets": await _status_breakdown("datasets", settings),

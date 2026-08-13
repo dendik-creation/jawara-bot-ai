@@ -24,18 +24,29 @@ class OpenAICompatibleProvider(LlmProvider):
         self._settings = settings
 
     async def generate(self, request: GenerationRequest) -> str:
+        return await self.complete(
+            load_system_prompt(),
+            build_user_message(request),
+            max_tokens=self._settings.llm_max_tokens,
+            temperature=self._settings.llm_temperature,
+            timeout=self._settings.llm_timeout_seconds,
+        )
+
+    async def complete(
+        self, system: str, user: str, *, max_tokens: int, temperature: float, timeout: float
+    ) -> str:
         body = {
             "model": self._settings.llm_model,
-            "max_tokens": self._settings.llm_max_tokens,
-            "temperature": self._settings.llm_temperature,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
             "messages": [
-                {"role": "system", "content": load_system_prompt()},
-                {"role": "user", "content": build_user_message(request)},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self._settings.llm_timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     f"{self._settings.llm_base_url.rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {self._settings.llm_api_key}"},

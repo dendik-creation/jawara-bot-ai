@@ -6,7 +6,7 @@ export default function EvaluationPage() {
     <div className="flex flex-col gap-6">
       <PageTitle
         title="Evaluation"
-        description="Gerbang antara model selesai dilatih dan model boleh melayani produksi — butuh training job COMPLETED (06_Model_Evaluation, Planned)."
+        description="Gerbang antara model selesai dilatih dan model boleh melayani produksi — menilai model terhadap dataset uji VALIDATED, butuh training job COMPLETED."
       />
 
       <ModelEvaluationList />

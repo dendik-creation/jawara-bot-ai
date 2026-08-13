@@ -1,6 +1,6 @@
 # Training Jobs
 
-> **Scope:** MVP, sebagai **operasi asinkron yang terkontrol** · **Status:** Planned
+> **Scope:** MVP, sebagai **operasi asinkron yang terkontrol** · **Status:** Implemented
 
 Training adalah operasi berat, berdurasi panjang, dan mahal. Karena itu bentuknya job, bukan request.
 

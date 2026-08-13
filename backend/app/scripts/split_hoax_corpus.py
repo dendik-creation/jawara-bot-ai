@@ -106,7 +106,7 @@ async def _create_and_fill(
     return {"dataset_id": dataset_id, "status": "DRAFT", "imported": len(samples)}
 
 
-async def run(eval_fraction: float, seed: int) -> dict[str, object]:
+async def run(eval_fraction: float, seed: int, version: int = _VERSION) -> dict[str, object]:
     settings = get_settings()
     samples = collect_samples()
     train, eval_ = stratified_split(samples, eval_fraction, seed)
@@ -117,10 +117,10 @@ async def run(eval_fraction: float, seed: int) -> dict[str, object]:
         train_result = await _create_and_fill(
             conn,
             _TRAIN_NAME,
-            _VERSION,
+            version,
             (
                 f"Stratified {1 - eval_fraction:.0%} train split of indonesia_hoax_news (seed={seed}), "
-                f"disjoint from {_EVAL_NAME} v{_VERSION}. Hoax rows keyword-heuristic labeled — review "
+                f"disjoint from {_EVAL_NAME} v{version}. Hoax rows keyword-heuristic labeled — review "
                 "label_counts and VALIDATE deliberately before use in a training job."
             ),
             operator_id,
@@ -130,10 +130,10 @@ async def run(eval_fraction: float, seed: int) -> dict[str, object]:
         eval_result = await _create_and_fill(
             conn,
             _EVAL_NAME,
-            _VERSION,
+            version,
             (
                 f"Stratified {eval_fraction:.0%} eval split of indonesia_hoax_news (seed={seed}), disjoint "
-                f"from {_TRAIN_NAME} v{_VERSION}. Hoax rows keyword-heuristic labeled — review label_counts "
+                f"from {_TRAIN_NAME} v{version}. Hoax rows keyword-heuristic labeled — review label_counts "
                 "and VALIDATE deliberately before use as held-out evaluation data."
             ),
             operator_id,
@@ -153,10 +153,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eval-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--version",
+        type=int,
+        default=_VERSION,
+        help="bump when re-running after a prior (name, version) pair got stuck REJECTED/DRAFT",
+    )
     args = parser.parse_args()
 
     configure_logging(get_settings().log_level)
-    logger.info("hoax corpus split finished", extra=asyncio.run(run(args.eval_fraction, args.seed)))
+    logger.info(
+        "hoax corpus split finished", extra=asyncio.run(run(args.eval_fraction, args.seed, args.version))
+    )
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ import asyncpg
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.services.datasets import create_dataset
+from app.services.datasets import _PHONE_PATTERN, create_dataset
 
 logger = logging.getLogger("app.scripts.import_hoax_corpus")
 
@@ -107,7 +107,11 @@ def _read_rows(path: Path) -> Iterator[dict[str, str]]:
 
 def collect_samples() -> list[tuple[str, str]]:
     """(text, label) pairs, deduplicated by text — VALIDATE rejects exact
-    duplicates — with first-seen order preserved.
+    duplicates — with first-seen order preserved. Rows containing a raw
+    Indonesian phone number (same `_PHONE_PATTERN` VALIDATE checks) are
+    dropped outright rather than redacted: TurnBackHoax articles sometimes
+    quote a scammer's number verbatim, and editing the text to pass the
+    check would be a worse trade than losing the ~1% of rows affected.
     """
     seen: set[str] = set()
     samples: list[tuple[str, str]] = []
@@ -116,7 +120,7 @@ def collect_samples() -> list[tuple[str, str]]:
         if not text:
             return
         cleaned = text.strip()
-        if not cleaned or cleaned in seen:
+        if not cleaned or cleaned in seen or _PHONE_PATTERN.search(cleaned):
             return
         seen.add(cleaned)
         samples.append((cleaned, label))

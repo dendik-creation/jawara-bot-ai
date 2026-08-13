@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { MetricsSummary } from "@/components/dashboard/metrics-summary"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -263,9 +264,7 @@ function ModelVersionDetailView({
           label="Dataset uji"
           value={`${modelVersion.evaluation_dataset_name} v${modelVersion.evaluation_dataset_version}`}
         />
-        {modelVersion.evaluation_metrics ? (
-          <Row label="Metrics evaluasi" value={JSON.stringify(modelVersion.evaluation_metrics)} />
-        ) : null}
+        {modelVersion.evaluation_metrics ? <MetricsSummary metrics={modelVersion.evaluation_metrics} /> : null}
         <Row label="Diperbarui" value={new Date(modelVersion.updated_at).toLocaleString("id-ID")} />
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>

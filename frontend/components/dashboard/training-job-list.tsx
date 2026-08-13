@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { MetricsSummary } from "@/components/dashboard/metrics-summary"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -375,7 +376,7 @@ function JobDetailView({ jobId, onClose, onChanged }: { jobId: string; onClose: 
         <Row label="Mulai" value={job.started_at ? new Date(job.started_at).toLocaleString("id-ID") : "—"} />
         <Row label="Selesai" value={job.finished_at ? new Date(job.finished_at).toLocaleString("id-ID") : "—"} />
         <Row label="Model version" value={job.generated_model_version ?? "—"} />
-        {job.metrics ? <Row label="Metrics" value={JSON.stringify(job.metrics)} /> : null}
+        {job.metrics ? <MetricsSummary metrics={job.metrics} /> : null}
         {job.error_message ? (
           <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
             {job.error_message}

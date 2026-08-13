@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { MetricsSummary } from "@/components/dashboard/metrics-summary"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -400,7 +401,7 @@ function EvaluationDetailView({
           label="Selesai"
           value={evaluation.finished_at ? new Date(evaluation.finished_at).toLocaleString("id-ID") : "—"}
         />
-        {evaluation.metrics ? <Row label="Metrics" value={JSON.stringify(evaluation.metrics)} /> : null}
+        {evaluation.metrics ? <MetricsSummary metrics={evaluation.metrics} /> : null}
         {evaluation.error_message ? (
           <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
             {evaluation.error_message}

@@ -23,11 +23,15 @@ def test_task_registered_under_documented_name():
 
 
 def test_worker_config_matches_retry_policy():
-    settings_max = process_message.max_retries
-    assert settings_max == 3
-    assert process_message.retry_backoff == 2
-    assert process_message.retry_backoff_max == 60
-    assert process_message.retry_jitter is True
+    # Retry is manual (see the task docstring) so its backoff comes from
+    # settings, read directly in the `except` branch, rather than Celery's
+    # `retry_backoff*` decorator kwargs.
+    assert process_message.max_retries == 3
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.celery_retry_backoff_seconds == 2
+    assert settings.celery_retry_backoff_max_seconds == 60
     assert celery_app.conf.task_acks_late is True
     assert celery_app.conf.task_default_queue == "jawara.messages"
 
@@ -72,6 +76,94 @@ def test_logs_are_correlated_to_waha_message_id(caplog):
 def test_job_envelope_round_trips():
     job = MessageJob.model_validate(JOB)
     assert job.model_dump(mode="json")["event"] == JOB["event"]
+
+
+# --------------------------------------------------------------------------
+# No silent failure: a genuinely unexpected pipeline exception must still
+# end in either a retry or a delivered, user-safe WhatsApp reply — never
+# nothing (JAWARA no-silent-failure requirement).
+# --------------------------------------------------------------------------
+
+
+def test_unexpected_pipeline_failure_asks_celery_for_a_retry(monkeypatch):
+    async def failing_pipeline(message, log_context, settings=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(worker_tasks, "process_message_job", failing_pipeline)
+
+    from celery.exceptions import Retry
+
+    with pytest.raises(Retry):
+        process_message.run(JOB)
+
+
+def test_exhausted_retries_sends_a_safe_reply_instead_of_failing_silently(monkeypatch):
+    async def failing_pipeline(message, log_context, settings=None):
+        raise RuntimeError("boom")
+
+    sent: list[dict] = []
+
+    class FakeWaha:
+        def __init__(self, settings=None):
+            pass
+
+        async def send_text(self, chat_id, text, session="default", reply_to=None):
+            sent.append({"chat_id": chat_id, "text": text, "reply_to": reply_to})
+
+    monkeypatch.setattr(worker_tasks, "process_message_job", failing_pipeline)
+    monkeypatch.setattr(worker_tasks, "WahaClient", FakeWaha)
+    # Simulate "this was the last attempt" without needing a real Celery
+    # worker to actually exhaust three retries end to end.
+    monkeypatch.setattr(worker_tasks.process_message, "max_retries", 0)
+
+    result = process_message.run(JOB)
+
+    assert result == {"status": "failed_safe_response_sent", "error": "RuntimeError"}
+    assert sent == [
+        {
+            "chat_id": JOB["chat_id"],
+            "text": worker_tasks.GENERIC_FAILURE_REPLY,
+            "reply_to": JOB["waha_message_id"],
+        }
+    ]
+
+
+def test_exhausted_retries_never_raises_even_without_a_chat_id(monkeypatch):
+    """No chat to reply to is itself a degraded case, not a crash — the task
+    must still end cleanly rather than raise a second, unrelated exception."""
+
+    async def failing_pipeline(message, log_context, settings=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(worker_tasks, "process_message_job", failing_pipeline)
+    monkeypatch.setattr(worker_tasks.process_message, "max_retries", 0)
+
+    result = process_message.run({**JOB, "chat_id": None})
+
+    assert result["status"] == "failed_safe_response_sent"
+
+
+def test_exhausted_retries_with_waha_also_down_still_returns_cleanly(monkeypatch):
+    """The failure notice itself failing to send must not mask the original
+    error or throw the task back into the retry machinery."""
+
+    async def failing_pipeline(message, log_context, settings=None):
+        raise RuntimeError("boom")
+
+    class FailingWaha:
+        def __init__(self, settings=None):
+            pass
+
+        async def send_text(self, *a, **k):
+            raise ConnectionError("waha unreachable")
+
+    monkeypatch.setattr(worker_tasks, "process_message_job", failing_pipeline)
+    monkeypatch.setattr(worker_tasks, "WahaClient", FailingWaha)
+    monkeypatch.setattr(worker_tasks.process_message, "max_retries", 0)
+
+    result = process_message.run(JOB)
+
+    assert result == {"status": "failed_safe_response_sent", "error": "RuntimeError"}
 
 
 # --------------------------------------------------------------------------

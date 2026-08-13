@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.clients.waha_client import WahaClient
 from app.core.config import get_settings
 from app.pipeline.orchestrator import process_message_job
 from app.schemas.queue import MessageJob
@@ -19,22 +20,37 @@ logger = logging.getLogger("app.worker.tasks")
 
 _settings = get_settings()
 
+# Last-resort reply when a `!cek`/`!link` job fails for a reason the pipeline
+# itself never degrades around (JAWARA no-silent-failure requirement: every
+# explicit command must end in SUCCESS or a USER_SAFE_FAILURE, never
+# nothing). No internals — no exception name, no task id, no HTTP status.
+GENERIC_FAILURE_REPLY = (
+    "Maaf, JAWARA sedang mengalami kendala saat memproses permintaan Anda.\n\n"
+    "Silakan coba lagi beberapa saat lagi."
+)
+
 
 @celery_app.task(
     bind=True,
     name=TASK_PROCESS_MESSAGE,
-    # Retry policy: up to 3 retries, exponential backoff (2s, 4s, 8s ... capped at
-    # 60s) with jitter so a broker/API outage doesn't produce a synchronised
-    # retry stampede. Malformed jobs are discarded instead (see below) — retrying
-    # a job that can never parse just burns the queue.
-    autoretry_for=(Exception,),
     max_retries=_settings.celery_max_retries,
-    retry_backoff=_settings.celery_retry_backoff_seconds,
-    retry_backoff_max=_settings.celery_retry_backoff_max_seconds,
-    retry_jitter=True,
 )
 def process_message(self, job: dict[str, Any]) -> dict[str, Any]:
-    """Run one WAHA message through the preprocessing → verification → LLM pipeline."""
+    """Run one WAHA message through the preprocessing → verification → LLM pipeline.
+
+    Retry is manual here (mirrors `ingest_fact_checks` below), not
+    `autoretry_for`: a decorator-driven retry has no hook for "retries are
+    now exhausted", and letting a job that backs an explicit `!cek`/`!link`
+    command go quiet after N silent attempts is exactly the failure mode
+    JAWARA's command system must not have. The pipeline itself already
+    degrades around every failure it knows how to name (missing ML Service,
+    missing threat-intel key, undeliverable WAHA send — see
+    `02_Data_Pipeline.md §6`); what reaches this `except` is, by
+    construction, something unexpected. Exponential backoff (2s, 4s, 8s...,
+    capped) up to `max_retries`, then one best-effort, generic WhatsApp reply
+    so the command still ends in a response the user can see, not a task
+    that quietly stops.
+    """
     try:
         message = MessageJob.model_validate(job)
     except ValidationError as exc:
@@ -51,10 +67,46 @@ def process_message(self, job: dict[str, Any]) -> dict[str, Any]:
     }
     logger.info("job consumed", extra=log_context)
 
-    result = run_pipeline(message, log_context)
+    try:
+        result = run_pipeline(message, log_context)
+    except Exception as exc:  # noqa: BLE001 — must never fall through silently, see docstring
+        logger.error(
+            "jawara.command.failed",
+            extra={**log_context, "error": type(exc).__name__},
+            exc_info=True,
+        )
+        if self.request.retries < self.max_retries:
+            delay = _settings.celery_retry_backoff_seconds * (2**self.request.retries)
+            raise self.retry(countdown=min(delay, _settings.celery_retry_backoff_max_seconds))
+
+        _send_failure_reply(message, log_context)
+        return {"status": "failed_safe_response_sent", "error": type(exc).__name__}
 
     logger.info("job completed", extra={**log_context, "result": result})
     return result
+
+
+def _send_failure_reply(message: MessageJob, log_context: dict[str, Any]) -> None:
+    """Best-effort final notice once retries are exhausted.
+
+    Never raises: the real failure is already logged above with full
+    context (`exc_info=True`), so a second failure here (WAHA also down)
+    must not mask it or re-enter the retry machinery — it is only logged.
+    """
+    if not message.chat_id:
+        logger.error("cannot send failure reply, no chat_id", extra=log_context)
+        return
+    try:
+        asyncio.run(
+            WahaClient(_settings).send_text(
+                message.chat_id,
+                GENERIC_FAILURE_REPLY,
+                session=message.session,
+                reply_to=message.waha_message_id,
+            )
+        )
+    except Exception:  # noqa: BLE001 — best-effort notice, not a retry trigger
+        logger.error("failed to deliver safe failure reply", extra=log_context, exc_info=True)
 
 
 @celery_app.task(

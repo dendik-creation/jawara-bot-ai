@@ -14,6 +14,7 @@ retrying only delays the log line that tells an operator what is wrong.
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -119,17 +120,34 @@ class WahaClient:
         )
         return SendResult(delivered=False, chat_id=chat_id, attempts=attempts, error=last_error)
 
-    async def get_message_text(self, session: str, chat_id: str, message_id: str) -> str | None:
-        """Body text of one historical message — the content a reply is asking about.
+    async def get_message(
+        self,
+        session: str,
+        chat_id: str,
+        message_id: str,
+        download_media: bool = False,
+    ) -> dict[str, Any] | None:
+        """Raw payload of one historical message — the same shape a live webhook
+        delivers, so `app.pipeline.media.image_attachment_of()` reads either one
+        the same way.
 
-        WAHA's webhook payload for a reply carries the *replied-to* message's id
-        (`app/pipeline/group_policy.py:quoted_message_id`), not its text — the
-        quote is a pointer, not an inline copy. This resolves that pointer.
+        WAHA's webhook payload for a reply carries only the *replied-to*
+        message's id (`app/pipeline/group_policy.py:quoted_message_id`), not
+        its content — the quote is a pointer. This resolves that pointer.
+
+        `download_media=True` asks WAHA to resolve/inline the attachment
+        (`?downloadMedia=true`) instead of returning a bare reference — a
+        second, deliberately rarer request, used only as a fallback when a
+        first fetch reports `hasMedia: true` without a usable `media.url` or
+        `media.data` (`app.pipeline.input_resolver.resolve_quoted_message`).
+
         Returns `None` on any failure (message deleted, id from before the
-        session paired, WAHA unreachable); the caller treats that as "no quoted
-        text available", not an error.
+        session paired, WAHA unreachable); the caller treats that as
+        "unavailable", not an error — a missing quote must degrade, not raise.
         """
         url = f"{self._settings.waha_api_url.rstrip('/')}/api/{session}/chats/{chat_id}/messages/{message_id}"
+        if download_media:
+            url += "?downloadMedia=true"
         try:
             async with httpx.AsyncClient(timeout=self._settings.waha_send_timeout_seconds) as client:
                 response = await client.get(url, headers=self._headers)
@@ -139,12 +157,21 @@ class WahaClient:
         except Exception:  # noqa: BLE001 — a missing quote must degrade, not raise
             logger.warning(
                 "waha quoted message fetch failed",
-                extra={"chat_id": chat_id, "message_id": message_id},
+                extra={"chat_id": chat_id, "message_id": message_id, "download_media": download_media},
                 exc_info=True,
             )
             return None
+        return data if isinstance(data, dict) else None
 
-        if not isinstance(data, dict):
+    async def get_message_text(self, session: str, chat_id: str, message_id: str) -> str | None:
+        """Body text of one historical message — the content a reply is asking about.
+
+        Thin convenience wrapper over `get_message()` for callers that only
+        need text (never media) and so never need the `downloadMedia`
+        fallback — kept for call sites unrelated to `!cek`'s reply handling.
+        """
+        data = await self.get_message(session, chat_id, message_id)
+        if data is None:
             return None
         text = data.get("body") or data.get("caption")
         return text.strip() if isinstance(text, str) and text.strip() else None

@@ -13,8 +13,6 @@ reply still leaves an audit row. The one thing the pipeline never does is claim
 more certainty than it has — `UNKNOWN` never renders as "safe".
 """
 
-import base64
-import binascii
 import logging
 import time
 from dataclasses import dataclass, field
@@ -27,12 +25,14 @@ from app.clients.ml_client import MlClient, MlServiceError
 from app.clients.waha_client import WahaClient
 from app.core.config import Settings, get_settings
 from app.core.hashing import hash_user_identifier
-from app.pipeline import group_policy, intent_router
+from app.pipeline import commands, group_policy, input_resolver, intent_router
 from app.pipeline.categories import Category, InputType, RiskLevel, Verdict, worst_risk
+from app.pipeline.media import ImageAttachment, attachment_names, image_attachment_of
 from app.pipeline.normalizer import normalize_text
 from app.pipeline.url_extractor import extract_urls
 from app.pipeline.url_safety import UrlScanResult, scan_urls
 from app.schemas.queue import MessageJob
+from app.services.health import check_waha
 from app.services.message_log import MessageLogEntry, chat_type_for, record_message
 from app.services.model_versions import get_production_model
 
@@ -42,16 +42,113 @@ logger = logging.getLogger("app.pipeline.orchestrator")
 # same webhook and must not be run through detection.
 MESSAGE_EVENTS = frozenset({"message", "message.any"})
 
-# Answer to a bare mention. Fixed text, not LLM-generated: there is nothing to
-# analyse, and a generated reply to an empty prompt is where a chatbot starts
-# making things up.
-EMPTY_MENTION_REPLY = (
-    "Halo! 👋 Saya JAWARA, asisten pemeriksa hoaks dan penipuan.\n\n"
-    "Silakan sebut saya sambil menyertakan pesannya, misalnya:\n"
-    "• Balas (reply) pesan yang mencurigakan, lalu sebut saya\n"
-    "• Atau tulis: @JAWARA tolong cek kabar ini ...\n\n"
-    "Saya bisa memeriksa klaim kesehatan dan link mencurigakan."
+# Fixed, non-LLM replies for the strict command gate (JAWARA Strict WhatsApp
+# Command System §§6-9, 14). Every one of these is a static string precisely
+# because the whole point of the gate is that no AI call happens before a
+# recognised command has been identified.
+
+# `@JAWARA` mentioned with no `!command` at all — a greeting, small talk, or
+# natural language that only *sounds* like a request ("tolong cek ini"). This
+# doubles as JAWARA's introduction: there is no separate first-interaction
+# state to track, so every bare mention gets the same informative overview
+# rather than a one-line reminder — `!bantu` is where the deeper, step-by-step
+# guide lives (see HELP_REPLY).
+MENTION_GUIDANCE_REPLY = (
+    "Halo! Saya JAWARA — asisten pemeriksa informasi dan ancaman di WhatsApp.\n\n"
+    "Saya dapat membantu memeriksa:\n"
+    "• Klaim atau berita yang meragukan\n"
+    "• Informasi dari gambar/screenshot\n"
+    "• Link yang mencurigakan\n\n"
+    "Cara menggunakan:\n"
+    "• Reply pesan yang ingin diperiksa, lalu tulis @JAWARA !cek\n"
+    "• Kirim teks langsung dengan @JAWARA !cek <pesan>\n"
+    "• Periksa link dengan @JAWARA !link <URL>\n\n"
+    "Command:\n"
+    "• !cek — periksa pesan, klaim, atau gambar\n"
+    "• !link — analisis link\n"
+    "• !bantu — panduan lengkap\n"
+    "• !status — status layanan\n\n"
+    "Contoh:\n"
+    "Reply gambar → @JAWARA !cek\n"
+    "@JAWARA !cek Apakah informasi ini benar?\n\n"
+    "Catatan: mention tanpa command tidak akan menjalankan pemeriksaan."
 )
+
+# `!something` where `something` is not in commands.KNOWN_COMMANDS.
+UNKNOWN_COMMAND_REPLY = (
+    "Command tidak dikenali.\n\n"
+    "Gunakan @JAWARA !bantu untuk melihat command yang tersedia."
+)
+
+# `!bantu` — the complete guide MENTION_GUIDANCE_REPLY only summarises.
+# Explicitly spells out reply-to-text and reply-to-image usage (§1-2): the
+# whole point is that users stop manually forwarding images and just reply.
+HELP_REPLY = (
+    "JAWARA — Panduan Penggunaan\n\n"
+    "JAWARA dapat membantu memeriksa informasi yang Anda temukan di WhatsApp. "
+    "Pemeriksaan hanya berjalan jika Anda memakai command — mention saja tidak cukup.\n\n"
+    "1. Periksa pesan\n"
+    "Reply pesan yang ingin diperiksa, lalu:\n"
+    "@JAWARA !cek\n\n"
+    "2. Periksa gambar\n"
+    "Reply gambar/screenshot, lalu:\n"
+    "@JAWARA !cek\n"
+    "JAWARA akan membaca informasi dalam gambar tersebut sebelum melakukan pemeriksaan.\n\n"
+    "3. Periksa teks\n"
+    "@JAWARA !cek <teks>\n\n"
+    "Contoh:\n"
+    "@JAWARA !cek Apakah benar pemerintah mengumumkan informasi ini?\n\n"
+    "4. Periksa link\n"
+    "@JAWARA !link <URL>\n\n"
+    "Contoh:\n"
+    "@JAWARA !link https://example.com\n\n"
+    "5. Status layanan\n"
+    "@JAWARA !status\n\n"
+    "Command:\n"
+    "!cek     Periksa pesan, klaim, atau gambar\n"
+    "!link    Periksa link\n"
+    "!bantu   Tampilkan panduan ini\n"
+    "!status  Lihat status layanan\n\n"
+    "Penting: mention seperti \"@JAWARA Halo\" tidak akan menjalankan pemeriksaan. "
+    "Gunakan command di atas."
+)
+
+# `!cek` with no reply, no inline text, and no media to read.
+CEK_USAGE_REPLY = (
+    "Format:\n"
+    "@JAWARA !cek\n\n"
+    "Gunakan command ini dengan:\n"
+    "• reply pesan yang ingin diperiksa\n"
+    "• teks setelah !cek\n"
+    "• gambar/media yang ingin diperiksa"
+)
+
+# `!link` with no URL in its argument or in the replied-to message.
+LINK_USAGE_REPLY = (
+    "Format:\n"
+    "@JAWARA !link <URL>\n\n"
+    "Contoh:\n"
+    "@JAWARA !link https://example.com"
+)
+
+
+async def _status_reply(settings: Settings) -> str:
+    """`!status` (JAWARA Strict WhatsApp Command System §7).
+
+    Public-safe by construction: it reuses the same WAHA reachability probe
+    `GET /health` already runs, and reports only the three user-facing lines
+    the spec asks for — never subsystem names like Redis, Celery or Qdrant.
+    """
+    online = await check_waha(settings)
+    layanan = "Online" if online else "Gangguan"
+    return (
+        "JAWARA STATUS\n\n"
+        f"● Layanan: {layanan}\n"
+        "● Pemeriksaan informasi: Aktif\n"
+        "● Pemeriksaan link: Aktif\n"
+        "● Pemeriksaan gambar: Aktif"
+    )
+
 
 # A knowledge-base verdict is a statement about the claim, so it maps directly
 # onto risk. UNVERIFIED is MEDIUM, never LOW: "no one has checked this" is not
@@ -156,76 +253,6 @@ def _payload_of(message: MessageJob) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _attachment_names(payload: dict[str, Any]) -> list[str]:
-    """Filenames WAHA reports for an attachment, across engine payload shapes."""
-    names: list[str] = []
-    for key in ("filename", "fileName"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            names.append(value)
-    media = payload.get("media")
-    if isinstance(media, dict):
-        for key in ("filename", "fileName"):
-            value = media.get(key)
-            if isinstance(value, str):
-                names.append(value)
-    return names
-
-
-_IMAGE_MIME_PREFIX = "image/"
-
-
-@dataclass(frozen=True)
-class ImageAttachment:
-    """One image WAHA attached to a message, however that engine reports it."""
-
-    mimetype: str
-    filename: str
-    url: str | None = None
-    data: bytes | None = None
-
-
-def _image_attachment(payload: dict[str, Any]) -> ImageAttachment | None:
-    """The image attachment on this message, if any — across WAHA engine shapes.
-
-    WAHA reports media two ways depending on its own `downloadMedia` webhook
-    setting: a `media.url` to fetch, or the bytes already inline as
-    `media.data` (base64). Neither is assumed; either is accepted. `type ==
-    "image"` or an `image/*` mimetype both count as "this is a picture" —
-    WEBJS and NOWEB spell the field slightly differently.
-
-    Returns `None` for anything that isn't a fetchable image, including a
-    payload that merely *claims* to be one but carries neither a URL nor
-    inline bytes — there is nothing this pipeline could OCR from that.
-    """
-    media = payload.get("media")
-    media = media if isinstance(media, dict) else {}
-    mimetype = str(media.get("mimetype") or payload.get("mimetype") or "")
-    is_image = mimetype.lower().startswith(_IMAGE_MIME_PREFIX) or payload.get("type") == "image"
-    if not is_image:
-        return None
-
-    filename = str(
-        media.get("filename")
-        or media.get("fileName")
-        or payload.get("filename")
-        or payload.get("fileName")
-        or "image"
-    )
-    url = media.get("url") if isinstance(media.get("url"), str) and media.get("url") else None
-    data: bytes | None = None
-    raw_data = media.get("data")
-    if isinstance(raw_data, str) and raw_data:
-        try:
-            data = base64.b64decode(raw_data, validate=False)
-        except (binascii.Error, ValueError):
-            data = None
-
-    if not url and not data:
-        return None
-    return ImageAttachment(mimetype=mimetype or "image/jpeg", filename=filename, url=url, data=data)
-
-
 def _input_type(urls_found: int, apk: bool, image_ocr: bool = False) -> InputType:
     if apk:
         return InputType.FILE_APK
@@ -267,9 +294,9 @@ async def process_message_job(
         return outcome.as_dict()
 
     body = payload.get("body") or payload.get("caption") or ""
-    attachments = _attachment_names(payload)
+    attachments = attachment_names(payload)
     quoted_id = group_policy.quoted_message_id(payload)
-    image_attachment = _image_attachment(payload)
+    image_attachment = image_attachment_of(payload)
     if not body.strip() and not attachments and not quoted_id and not image_attachment:
         outcome.status = "ignored_empty_body"
         return outcome.as_dict()
@@ -305,30 +332,110 @@ async def process_message_job(
     if decision.is_group:
         body = group_policy.strip_bot_mentions(body, bot_ids)
 
-    # A reply carries its own new text (often empty — "@JAWARA, is this true?"
-    # or just the mention) plus a pointer to the message being asked about. The
-    # pointer is what must actually be checked, so it is fetched and folded in
-    # before anything downstream reads `body` — a bare "@JAWARA" on a reply is
-    # a complete request, not an empty one.
-    if decision.quoted_message_id:
-        quoted_text = await WahaClient(settings).get_message_text(
-            message.session, chat_id, decision.quoted_message_id
-        )
-        if quoted_text:
-            body = f"{quoted_text}\n\n{body}".strip() if body.strip() else quoted_text
-        else:
-            outcome.degradations.append("quoted_message_unavailable")
-
+    # --- strict command gate (JAWARA Strict WhatsApp Command System) ------
+    # Mention = activation, command = intent: a group mention only ever
+    # reaches OCR/RAG/URL-scanning/the LLM by way of one of the four
+    # allowlisted `!name` commands. A bare mention, a greeting, an
+    # unrecognised `!name`, or natural language that only sounds like a
+    # request all get a fixed reply and return here — before a single
+    # expensive call is made. `!bantu` and `!status` are answered outright;
+    # `!cek` and `!link` fall through, with `body` replaced by the command's
+    # own argument text, to the same pipeline a direct chat already uses.
+    # A direct chat never goes through this gate (unchanged behaviour: the
+    # user opened the chat, so there is no casual-mention problem to guard
+    # against there).
+    parsed_command: commands.ParsedCommand | None = None
     if decision.is_group:
-        if not body.strip() and not attachments:
-            # "@JAWARA" and nothing else — no reply, no attachment, no quoted
-            # text recovered: called, but given nothing to check. Silence would
-            # read as a broken bot, so say what it needs — and say it as a
-            # quote of the summons, so the group sees who asked.
+        parsed_command = commands.parse_command(body)
+        logger.info(
+            "jawara.command.received",
+            extra={
+                **log_context,
+                "has_reply": bool(decision.quoted_message_id),
+                "has_media": bool(image_attachment),
+            },
+        )
+
+        if parsed_command.command is None:
+            logger.info("jawara.command.rejected", extra={**log_context, "command": "none"})
             send = await WahaClient(settings).send_text(
-                chat_id, EMPTY_MENTION_REPLY, session=message.session, reply_to=message.waha_message_id
+                chat_id, MENTION_GUIDANCE_REPLY, session=message.session, reply_to=message.waha_message_id
             )
-            outcome.status = "mention_without_content"
+            outcome.status = "mention_no_command"
+            outcome.response_dispatched = send.delivered
+            return outcome.as_dict()
+
+        if not parsed_command.recognized:
+            logger.info(
+                "jawara.command.rejected", extra={**log_context, "command": parsed_command.command}
+            )
+            send = await WahaClient(settings).send_text(
+                chat_id, UNKNOWN_COMMAND_REPLY, session=message.session, reply_to=message.waha_message_id
+            )
+            outcome.status = "command_unrecognized"
+            outcome.response_dispatched = send.delivered
+            return outcome.as_dict()
+
+        logger.info("jawara.command.recognized", extra={**log_context, "command": parsed_command.command})
+
+        if parsed_command.command == commands.BANTU:
+            send = await WahaClient(settings).send_text(
+                chat_id, HELP_REPLY, session=message.session, reply_to=message.waha_message_id
+            )
+            outcome.status = "command_bantu"
+            outcome.response_dispatched = send.delivered
+            logger.info("jawara.command.executed", extra={**log_context, "command": "bantu"})
+            return outcome.as_dict()
+
+        if parsed_command.command == commands.STATUS:
+            send = await WahaClient(settings).send_text(
+                chat_id, await _status_reply(settings), session=message.session, reply_to=message.waha_message_id
+            )
+            outcome.status = "command_status"
+            outcome.response_dispatched = send.delivered
+            logger.info("jawara.command.executed", extra={**log_context, "command": "status"})
+            return outcome.as_dict()
+
+        # !cek and !link: the command word itself is not content.
+        body = parsed_command.args
+
+    # A reply carries its own new text (often empty — "@JAWARA !cek" alone on
+    # a reply) plus a pointer to the message being asked about. The pointer
+    # is what must actually be checked, so it is fetched and folded in before
+    # anything downstream reads `body` — a bare "!cek" on a reply is a
+    # complete request, not an empty one.
+    quoted_image: ImageAttachment | None = None
+    if decision.quoted_message_id:
+        resolved_quote = await input_resolver.resolve_quoted_message(
+            WahaClient(settings), message.session, chat_id, decision.quoted_message_id, log_context
+        )
+        outcome.degradations.extend(resolved_quote.degraded)
+        if resolved_quote.text:
+            body = f"{resolved_quote.text}\n\n{body}".strip() if body.strip() else resolved_quote.text
+        quoted_image = resolved_quote.image
+
+    # Input-resolution priority (reply-to-media fix §4): a replied-to image
+    # is the primary content — ahead of the current message's own
+    # attachment, since a reply is what the user actually pointed at.
+    effective_image = quoted_image or image_attachment
+
+    if decision.is_group and parsed_command is not None:
+        if parsed_command.command == commands.CEK:
+            if not body.strip() and not attachments and not effective_image:
+                # "!cek" and nothing else — no reply, no attachment, no quoted
+                # text or image recovered, no inline text: called, but given
+                # nothing to check.
+                send = await WahaClient(settings).send_text(
+                    chat_id, CEK_USAGE_REPLY, session=message.session, reply_to=message.waha_message_id
+                )
+                outcome.status = "command_cek_usage_error"
+                outcome.response_dispatched = send.delivered
+                return outcome.as_dict()
+        elif parsed_command.command == commands.LINK and not extract_urls(body):
+            send = await WahaClient(settings).send_text(
+                chat_id, LINK_USAGE_REPLY, session=message.session, reply_to=message.waha_message_id
+            )
+            outcome.status = "command_link_usage_error"
             outcome.response_dispatched = send.delivered
             return outcome.as_dict()
 
@@ -338,11 +445,13 @@ async def process_message_job(
     # routing, claim extraction with its injection guard, RAG, verification)
     # runs the exact path a typed message already takes. OCR only changes
     # which text that path receives; it never produces a verdict itself.
-    if image_attachment and settings.ocr_enabled:
+    # `effective_image` — never the raw `image_attachment` — so a replied-to
+    # picture is read the same way a directly attached one already is.
+    if effective_image and settings.ocr_enabled:
         max_bytes = int(settings.ocr_max_image_size_mb * 1024 * 1024)
-        image_bytes = image_attachment.data
-        if image_bytes is None and image_attachment.url:
-            image_bytes = await WahaClient(settings).download_media(image_attachment.url)
+        image_bytes = effective_image.data
+        if image_bytes is None and effective_image.url:
+            image_bytes = await WahaClient(settings).download_media(effective_image.url)
 
         if not image_bytes:
             outcome.degradations.append("ocr_media_unavailable")
@@ -354,7 +463,7 @@ async def process_message_job(
         else:
             try:
                 ocr_response = await ml.ocr(
-                    request_id, image_bytes, image_attachment.filename, image_attachment.mimetype
+                    request_id, image_bytes, effective_image.filename, effective_image.mimetype
                 )
             except MlServiceError as exc:
                 outcome.degradations.append(f"ocr_unavailable:{exc.error_code}")
@@ -391,11 +500,22 @@ async def process_message_job(
     has_apk = any(name.lower().endswith(".apk") for name in attachments)
 
     # --- stage 5a: deterministic detection rules --------------------------
-    intent = intent_router.classify(
-        normalized.text,
-        urls=urls,
-        attachment_names=attachments,
-    )
+    if decision.is_group and parsed_command is not None and parsed_command.command == commands.LINK:
+        # !link is an explicit command, not a natural-language guess: go
+        # straight to the URL-safety engine the command promised rather than
+        # letting the keyword lexicon reclassify it.
+        intent = intent_router.IntentResult(
+            category=Category.PHISHING_LINK,
+            confidence=1.0,
+            engine=intent_router.ENGINE_URL_SAFETY,
+            signals=("command:link",),
+        )
+    else:
+        intent = intent_router.classify(
+            normalized.text,
+            urls=urls,
+            attachment_names=attachments,
+        )
     outcome.intent = intent.category.value if intent.category else "UNKNOWN"
     outcome.intent_confidence = intent.confidence
     outcome.engine = intent.engine
@@ -559,6 +679,11 @@ async def process_message_job(
         )
     finally:
         await redis.aclose()
+
+    if decision.is_group and parsed_command is not None:
+        logger.info(
+            "jawara.command.executed", extra={**log_context, "command": parsed_command.command}
+        )
 
     logger.info(
         "pipeline complete",

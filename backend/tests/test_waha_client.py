@@ -100,6 +100,43 @@ async def test_get_message_text_returns_none_for_blank_body(monkeypatch):
     assert text is None
 
 
+async def test_get_message_hits_the_documented_endpoint(monkeypatch):
+    calls = patch_httpx(
+        monkeypatch,
+        "app.clients.waha_client",
+        lambda **_: FakeResponse(200, {"body": "cek info ini ya", "hasMedia": False}),
+    )
+    data = await WahaClient(waha_settings()).get_message("default", CHAT_ID, "false_x_1")
+
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"] == f"http://waha:3000/api/default/chats/{CHAT_ID}/messages/false_x_1"
+    assert data == {"body": "cek info ini ya", "hasMedia": False}
+
+
+async def test_get_message_with_download_media_appends_the_query_param(monkeypatch):
+    calls = patch_httpx(
+        monkeypatch,
+        "app.clients.waha_client",
+        lambda **_: FakeResponse(200, {"hasMedia": True, "media": {"url": "http://waha:3000/api/files/x.jpg"}}),
+    )
+    data = await WahaClient(waha_settings()).get_message(
+        "default", CHAT_ID, "false_x_1", download_media=True
+    )
+
+    assert calls[0]["url"] == f"http://waha:3000/api/default/chats/{CHAT_ID}/messages/false_x_1?downloadMedia=true"
+    assert data["media"]["url"] == "http://waha:3000/api/files/x.jpg"
+
+
+async def test_get_message_returns_none_when_not_found(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(404))
+    assert await WahaClient(waha_settings()).get_message("default", CHAT_ID, "gone") is None
+
+
+async def test_get_message_returns_none_on_transport_failure(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", raise_timeout)
+    assert await WahaClient(waha_settings()).get_message("default", CHAT_ID, "x") is None
+
+
 async def test_server_error_is_retried(monkeypatch):
     calls = patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(500))
     await WahaClient(waha_settings()).send_text(CHAT_ID, REPLY)

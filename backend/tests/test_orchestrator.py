@@ -144,6 +144,9 @@ class FakeWaha:
         delivered: bool = True,
         bot_ids: frozenset[str] = frozenset(),
         quoted_text: str | None = None,
+        quoted_media: dict | None = None,
+        quoted_has_media: bool = False,
+        quoted_media_after_download: dict | None = None,
         media_bytes: bytes | None = None,
     ):
         self.delivered = delivered
@@ -151,6 +154,9 @@ class FakeWaha:
         self.quoted: list[str | None] = []
         self._bot_ids = bot_ids
         self._quoted_text = quoted_text
+        self._quoted_media = quoted_media
+        self._quoted_has_media = quoted_has_media
+        self._quoted_media_after_download = quoted_media_after_download
         self._media_bytes = media_bytes
         self.get_message_calls: list[dict] = []
         self.download_media_calls: list[str] = []
@@ -163,9 +169,35 @@ class FakeWaha:
     async def session_identity(self, session):
         return self._bot_ids
 
+    async def get_message(self, session, chat_id, message_id, download_media=False):
+        """Mirrors `WahaClient.get_message` — the raw message payload a
+        reply's `!cek`/`!link` resolves against, text and/or media.
+        `quoted_media_after_download` simulates WAHA only resolving an
+        attachment once asked with `?downloadMedia=true` — absent on the
+        first (plain) fetch, present only when `download_media=True`."""
+        self.get_message_calls.append(
+            {"session": session, "chat_id": chat_id, "message_id": message_id, "download_media": download_media}
+        )
+        if download_media and self._quoted_media_after_download is not None:
+            data: dict = {"media": self._quoted_media_after_download, "hasMedia": True}
+            if self._quoted_text is not None:
+                data["body"] = self._quoted_text
+            return data
+        if self._quoted_text is None and self._quoted_media is None and not self._quoted_has_media:
+            return None
+        data = {}
+        if self._quoted_text is not None:
+            data["body"] = self._quoted_text
+        if self._quoted_media is not None:
+            data["media"] = self._quoted_media
+            data["hasMedia"] = True
+        elif self._quoted_has_media:
+            data["hasMedia"] = True
+        return data
+
     async def get_message_text(self, session, chat_id, message_id):
-        self.get_message_calls.append({"session": session, "chat_id": chat_id, "message_id": message_id})
-        return self._quoted_text
+        data = await self.get_message(session, chat_id, message_id)
+        return data.get("body") if data else None
 
     async def download_media(self, url):
         self.download_media_calls.append(url)
@@ -399,7 +431,11 @@ GROUP_ID = "62811-1234@g.us"
 BOT_IDS = frozenset({"6287712032005@c.us"})
 
 
-def group_job(text: str = HOAX_TEXT, **payload_overrides) -> MessageJob:
+def group_job(text: str = f"!cek {HOAX_TEXT}", **payload_overrides) -> MessageJob:
+    """A group message. `text` defaults to a valid `!cek` command — the
+    strict command gate (JAWARA Strict WhatsApp Command System) means a bare
+    mention no longer reaches the pipeline, so every group test that wants
+    the message actually analysed needs a recognised command in the body."""
     return job(text, id="x1", **{"from": GROUP_ID, "participant": "628999@c.us", **payload_overrides})
 
 
@@ -488,20 +524,20 @@ async def test_quoted_message_unavailable_degrades_without_failing(rig):
     assert ml.generate_calls[0]["user_text"] == "tolong cek ya"
 
 
-async def test_group_bare_mention_with_quoted_message_is_not_treated_as_empty(rig):
-    """'@JAWARA' on a reply is a complete request once the quote resolves."""
+async def test_group_bare_cek_with_quoted_message_is_not_treated_as_empty(rig):
+    """'@JAWARA !cek' on a reply is a complete request once the quote resolves."""
     quoted = "Klik link ini buat klaim bansos 2 juta sebelum kuota habis"
     ml = FakeMlClient(matches=[])
     waha = FakeWaha(bot_ids=BOT_IDS, quoted_text=quoted)
     rig(ml=ml, waha=waha)
 
     result = await orchestrator.process_message_job(
-        group_job(text="@6287712032005", mentionedIds=["6287712032005@c.us"], replyTo={"id": "orig-msg-2"}),
+        group_job(text="@6287712032005 !cek", mentionedIds=["6287712032005@c.us"], replyTo={"id": "orig-msg-2"}),
         {},
         SETTINGS,
     )
 
-    assert result["status"] != "mention_without_content"
+    assert result["status"] == "processed"
     assert ml.generate_calls[0]["user_text"] == quoted
 
 
@@ -510,7 +546,7 @@ async def test_bot_mention_is_not_analysed_as_message_content(rig):
     rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
 
     await orchestrator.process_message_job(
-        group_job(text=f"@6287712032005 {HOAX_TEXT}", mentionedIds=["6287712032005@c.us"]),
+        group_job(text=f"@6287712032005 !cek {HOAX_TEXT}", mentionedIds=["6287712032005@c.us"]),
         {},
         SETTINGS,
     )
@@ -518,7 +554,9 @@ async def test_bot_mention_is_not_analysed_as_message_content(rig):
     assert "6287712032005" not in ml.generate_calls[0]["user_text"]
 
 
-async def test_bare_mention_answers_with_instructions_instead_of_silence(rig):
+async def test_bare_mention_without_command_gets_guidance_and_never_calls_ai(rig):
+    """'@JAWARA' alone — no `!command` — is the exact case the strict command
+    gate exists to stop: it must never reach the classifier, RAG, or the LLM."""
     ml = FakeMlClient(matches=[KB_MATCH])
     state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
 
@@ -526,9 +564,12 @@ async def test_bare_mention_answers_with_instructions_instead_of_silence(rig):
         group_job(text="@6287712032005", mentionedIds=["6287712032005@c.us"]), {}, SETTINGS
     )
 
-    assert result["status"] == "mention_without_content"
-    assert state["waha"].sent[0][1] == orchestrator.EMPTY_MENTION_REPLY
-    assert ml.generate_calls == []  # nothing to analyse, so nothing is generated
+    assert result["status"] == "mention_no_command"
+    assert state["waha"].sent[0][1] == orchestrator.MENTION_GUIDANCE_REPLY
+    assert ml.generate_calls == []
+    assert ml.rag_calls == []
+    assert ml.classify_calls == []
+    assert ml.ocr_calls == []
 
 
 async def test_dispatch_failure_is_recorded_and_still_audited(rig):
@@ -803,5 +844,287 @@ async def test_media_download_failure_degrades_without_crashing(rig):
 
     assert ml.ocr_calls == []
     assert "ocr_media_unavailable" in result["degradations"]
+
+
+# --------------------------------------------------------------------------
+# Strict command gate (JAWARA Strict WhatsApp Command System)
+#
+# A group message is only ever analysed via one of four allowlisted `!name`
+# commands. Every other case below must return without touching the
+# classifier, RAG, URL scanner, OCR or the LLM.
+# --------------------------------------------------------------------------
+
+
+def mentioning(text: str, **overrides) -> MessageJob:
+    return group_job(text=text, mentionedIds=["6287712032005@c.us"], **overrides)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Halo", "Halo JAWARA", "JAWARA tolong cek ini", "Apa kabar?"],
+)
+async def test_mention_without_a_command_never_reaches_ai(rig, text):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning(text), {}, SETTINGS)
+
+    assert result["status"] == "mention_no_command"
+    assert state["waha"].sent[0][1] == orchestrator.MENTION_GUIDANCE_REPLY
+    assert ml.generate_calls == []
+    assert ml.rag_calls == []
+    assert ml.classify_calls == []
+    assert ml.ocr_calls == []
+    assert state["rows"] == []  # no audit row either — nothing was analysed
+
+
+@pytest.mark.parametrize("name", ["foo", "search", "ocr", "rag", "factcheck"])
+async def test_unrecognised_command_never_reaches_ai(rig, name):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning(f"!{name}"), {}, SETTINGS)
+
+    assert result["status"] == "command_unrecognized"
+    assert state["waha"].sent[0][1] == orchestrator.UNKNOWN_COMMAND_REPLY
+    assert ml.generate_calls == []
+    assert ml.rag_calls == []
+
+
+async def test_bantu_shows_the_public_command_list_without_touching_ai(rig):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning("!bantu"), {}, SETTINGS)
+
+    assert result["status"] == "command_bantu"
+    assert state["waha"].sent[0][1] == orchestrator.HELP_REPLY
+    assert ml.generate_calls == []
+
+
+async def test_status_reports_public_service_state_without_touching_ai(rig, monkeypatch):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    waha = FakeWaha(bot_ids=BOT_IDS)
+    state = rig(ml=ml, waha=waha)
+
+    async def fake_check_waha(settings):
+        return True
+
+    monkeypatch.setattr(orchestrator, "check_waha", fake_check_waha)
+
+    result = await orchestrator.process_message_job(mentioning("!status"), {}, SETTINGS)
+
+    assert result["status"] == "command_status"
+    assert "Online" in state["waha"].sent[0][1]
+    assert "Redis" not in state["waha"].sent[0][1]
+    assert "Qdrant" not in state["waha"].sent[0][1]
+    assert ml.generate_calls == []
+
+
+@pytest.mark.parametrize("text", ["!CEK", "!Cek", "!LINK https://example.com"])
+async def test_command_name_case_is_normalised(rig, text):
+    scan = UrlScanResult(risk=RiskLevel.LOW)
+    ml = FakeMlClient(matches=[])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS), url_scan=scan)
+
+    result = await orchestrator.process_message_job(mentioning(text), {}, SETTINGS)
+
+    assert result["status"] != "command_unrecognized"
+    assert result["status"] != "mention_no_command"
+
+
+async def test_cek_without_reply_text_or_media_returns_usage_error(rig):
+    ml = FakeMlClient(matches=[KB_MATCH])
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning("!cek"), {}, SETTINGS)
+
+    assert result["status"] == "command_cek_usage_error"
+    assert state["waha"].sent[0][1] == orchestrator.CEK_USAGE_REPLY
+    assert ml.generate_calls == []
+    assert ml.rag_calls == []
+
+
+async def test_link_without_a_url_returns_usage_error(rig):
+    ml = FakeMlClient()
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning("!link"), {}, SETTINGS)
+
+    assert result["status"] == "command_link_usage_error"
+    assert state["waha"].sent[0][1] == orchestrator.LINK_USAGE_REPLY
+    assert ml.generate_calls == []
+
+
+async def test_link_with_a_url_routes_only_to_url_safety(rig):
+    """!link must never fall through to claim extraction or RAG — only the
+    URL-safety engine the command explicitly asked for."""
+    scan = UrlScanResult(
+        risk=RiskLevel.HIGH,
+        urls=(
+            UrlRisk(
+                url="https://bansos-pemerintah-2026.com",
+                domain="bansos-pemerintah-2026.com",
+                is_shortlink=False,
+                risk=RiskLevel.HIGH,
+                reason="flagged_by=safe_browsing",
+            ),
+        ),
+    )
+    ml = FakeMlClient(matches=[KB_MATCH])  # would prove RAG ran, if it did
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS), url_scan=scan)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!link https://bansos-pemerintah-2026.com"), {}, SETTINGS
+    )
+
+    assert result["status"] == "processed"
+    assert result["engine"] == "url_safety"
+    assert result["risk"] == "HIGH"
+    assert ml.rag_calls == []
+    assert ml.claim_calls == []
+    assert ml.generate_calls[0]["url_verdicts"][0]["risk"] == "HIGH"
+
+
+async def test_inline_cek_text_is_checked_directly(rig):
+    ml = FakeMlClient(matches=[KB_MATCH], message="pesan balasan")
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(mentioning(f"!cek {HOAX_TEXT}"), {}, SETTINGS)
+
+    assert result["status"] == "processed"
+    assert ml.generate_calls[0]["user_text"] == HOAX_TEXT
+    assert state["waha"].sent[0][1] == "pesan balasan"
     assert result["ocr_used"] is False
     assert state["rows"][0].input_type.value == "TEXT"
+
+
+async def test_image_with_cek_command_uses_the_existing_ocr_flow(rig):
+    """Image + '@JAWARA !cek', no caption text of its own — the user does not
+    need a separate `!ocr` command; `!cek` reuses the existing OCR pipeline."""
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    )
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS))
+
+    result = await orchestrator.process_message_job(
+        image_job(
+            text="@6287712032005 !cek",
+            **{"from": GROUP_ID, "id": "x1", "participant": "628999@c.us", "mentionedIds": ["6287712032005@c.us"]},
+        ),
+        {},
+        SETTINGS_OCR,
+    )
+
+    assert result["status"] == "processed"
+    assert result["ocr_used"] is True
+    assert ml.generate_calls[0]["user_text"] == HOAX_TEXT
+    assert state["rows"][0].input_type.value == "IMAGE_OCR"
+
+
+# --------------------------------------------------------------------------
+# Reply-to-media resolution: "@JAWARA !cek <question>" replying to SOMEONE
+# ELSE'S image must read the replied image, not just the question text next
+# to it (the bug where JAWARA answered "I can't see the image").
+# --------------------------------------------------------------------------
+
+
+async def test_reply_to_image_is_ocrd_using_the_replied_message_not_the_current_one(rig):
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    )
+    waha = FakeWaha(
+        bot_ids=BOT_IDS,
+        quoted_media={"mimetype": "image/jpeg", "url": "http://waha:3000/api/files/abc.jpg"},
+        media_bytes=b"fake-jpeg-bytes",
+    )
+    state = rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!cek apakah informasi di gambar itu benar?", replyTo={"id": "orig-msg-1"}),
+        {},
+        SETTINGS_OCR,
+    )
+
+    assert result["status"] == "processed"
+    assert result["ocr_used"] is True
+    assert state["rows"][0].input_type.value == "IMAGE_OCR"
+    # Both preserved: the OCR'd content of the image AND the user's own
+    # question — one must never silently replace the other (§12).
+    checked = ml.generate_calls[0]["user_text"]
+    assert HOAX_TEXT in checked
+    assert "apakah informasi di gambar itu benar?" in checked
+    assert waha.download_media_calls == ["http://waha:3000/api/files/abc.jpg"]
+
+
+async def test_reply_to_image_falls_back_to_download_media_when_no_inline_reference(rig):
+    """`replyTo.hasMedia: true` but no inline `media.url`/`media.data` on the
+    first fetch — must retry with `?downloadMedia=true` rather than give up."""
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    )
+    waha = FakeWaha(
+        bot_ids=BOT_IDS,
+        quoted_has_media=True,
+        quoted_media_after_download={"mimetype": "image/jpeg", "data": "ZmFrZS1qcGVn"},
+    )
+    state = rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!cek", replyTo={"id": "orig-msg-1"}), {}, SETTINGS_OCR
+    )
+
+    assert result["status"] == "processed"
+    assert result["ocr_used"] is True
+    assert state["rows"][0].input_type.value == "IMAGE_OCR"
+    assert [c["download_media"] for c in waha.get_message_calls] == [False, True]
+
+
+async def test_reply_to_image_still_unresolvable_after_fallback_is_a_safe_degradation(rig):
+    """No usable image even after the fallback fetch: `!cek` must still end
+    in a response (falls through to 'nothing to check'), never a crash or
+    silence."""
+    ml = FakeMlClient(matches=[])
+    waha = FakeWaha(bot_ids=BOT_IDS, quoted_has_media=True)
+    state = rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!cek", replyTo={"id": "orig-msg-1"}), {}, SETTINGS_OCR
+    )
+
+    assert result["status"] == "command_cek_usage_error"
+    assert "reply_media_unavailable" in result["degradations"]
+    assert state["waha"].sent[0][1] == orchestrator.CEK_USAGE_REPLY
+
+
+async def test_reply_to_link_via_cek_still_routes_to_url_safety(rig):
+    """`!cek` on a reply containing a URL must not force the user to
+    `!link` — the existing auto-routing already handles it (§13)."""
+    scan = UrlScanResult(
+        risk=RiskLevel.HIGH,
+        urls=(
+            UrlRisk(
+                url="http://bansos-pemerintah-2026.com",
+                domain="bansos-pemerintah-2026.com",
+                is_shortlink=False,
+                risk=RiskLevel.HIGH,
+                reason="flagged_by=safe_browsing",
+            ),
+        ),
+    )
+    waha = FakeWaha(bot_ids=BOT_IDS, quoted_text=PHISHING_TEXT)
+    state = rig(url_scan=scan, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!cek", replyTo={"id": "orig-msg-1"}), {}, SETTINGS
+    )
+
+    assert result["status"] == "processed"
+    assert result["engine"] == "url_safety"
+    assert result["risk"] == "HIGH"

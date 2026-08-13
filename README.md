@@ -1,6 +1,6 @@
-# JAWARA — Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman
+# JAWARA: Jaringan Asisten WhatsApp Anti-Rekayasa & Ancaman
 
-WhatsApp-native anti-fraud/anti-hoax assistant (Smart Family Guard). Self-hosted, containerized, built for Gemastik 2026 Software Development. Full product docs live in [`obsidian-docs/`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/00_Index.md) — this file covers the monorepo/dev side only.
+WhatsApp-native anti-fraud/anti-hoax assistant (Smart Family Guard). Self-hosted, containerized, built for Gemastik 2026 Software Development. Full product docs live in [`obsidian-docs/`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/00_Index.md); this file covers the monorepo/dev side only.
 
 ## Repository structure
 
@@ -23,77 +23,52 @@ Single Git repository, root as the only `.git`. Monorepo, not a multi-repo submo
 
 | Service | Role |
 |---|---|
-| `waha` | Self-hosted WhatsApp HTTP API engine — receives/sends WhatsApp messages |
-| `api-gateway` | FastAPI backend — webhook intake, auth, orchestration, Control Panel APIs |
-| `celery-worker` | Async pipeline: preprocess → rules → verify → generate → dispatch → audit |
+| `waha` | Self-hosted WhatsApp HTTP API engine, receives/sends WhatsApp messages |
+| `api-gateway` | FastAPI backend: webhook intake, auth, orchestration, Control Panel APIs |
+| `celery-worker` | Async pipeline: preprocess, rules, verify, generate, dispatch, audit |
 | `ml-service` | Inference: embeddings, RAG retrieval, LLM response generation, knowledge upsert |
-| `postgres` | Primary relational store — message logs, fact knowledge, subscriptions |
-| `qdrant` | Vector DB — knowledge embeddings, semantic/RAG retrieval |
+| `postgres` | Primary relational store: message logs, fact knowledge, subscriptions |
+| `qdrant` | Vector DB: knowledge embeddings, semantic/RAG retrieval |
 | `redis` | Celery broker + rate limiting + threat-intel cache + transient state |
-| `frontend-dashboard` | Next.js Control Panel — operator login, Command Center, Service Health |
+| `frontend-dashboard` | Next.js Control Panel: operator login, Command Center, Service Health |
 
-`ml-service` is health-checked on **readiness** (`/v1/ready`, models loaded), not liveness — an orchestrator that routes traffic to a container still loading weights produces first requests that fail for no visible reason.
+`ml-service` is health-checked on **readiness** (`/v1/ready`, models loaded), not liveness. An orchestrator that routes traffic to a container still loading weights produces first requests that fail for no visible reason.
 
-## Development setup
+## Setup
 
-**Backend** (`backend/`) and **ML Service** (`ml-service/`): Python 3.14, managed by **uv** — `pyproject.toml` declares the dependencies, `uv.lock` pins them, and both Dockerfiles install from that same lock. There is no `requirements.txt`.
+Full, step-by-step setup guides live in [`obsidian-docs/.../07_How_to_Run/`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/07_How_to_Run/). This section only orients you toward the right guide, follow the linked doc for actual commands, troubleshooting, and env var reference.
 
-```bash
-cd backend        # or ml-service
-uv sync
-uv run pytest -q
-```
+### Local development (hybrid: infra in Docker, app on CLI)
 
-**Frontend** (`frontend/`): uses **bun**, not npm/yarn (lockfile is `bun.lock`).
+Infra (WAHA, Postgres, Redis, Qdrant, ml-service) runs in Docker Compose; backend (FastAPI) and frontend (Next.js) run directly on your machine for hot-reload.
 
-```bash
-cd frontend
-bun install
-bun run dev -- -p 3001   # 3000 collides with WAHA
-```
+- **Backend** (`backend/`) and **ML Service** (`ml-service/`): Python 3.14, managed by **uv** (`pyproject.toml` + `uv.lock`, no `requirements.txt`).
+- **Frontend** (`frontend/`): uses **bun**, not npm/yarn (lockfile is `bun.lock`).
 
-## Docker usage
+Full guide, including `.env` setup, database bootstrap, Celery worker, and troubleshooting: [`01_Dev_Environtment.md`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/07_How_to_Run/01_Dev_Environtment.md).
 
-```bash
-cp .env.example .env   # fill in real values — WAHA creds, Postgres creds, ML_SERVICE_API_KEY
-docker compose up -d --build
+### Full stack via Docker Compose (production / VPS deployment)
 
-docker exec jawara-gateway python -m app.db.migrate
-docker exec jawara-gateway python -m app.vector.qdrant_setup
-docker exec jawara-gateway python -m app.scripts.seed_facts
-docker exec jawara-gateway python -m app.scripts.ingest_knowledge
+All 9 services run as containers, orchestrated by the root `docker-compose.yml`. Every service except WAHA's pairing port binds to `127.0.0.1` only, nothing is public by default, and this repo ships no reverse proxy or TLS termination of its own (bring your own).
 
-# Control Panel account — nothing can sign in until this exists. Reads
-# OPERATOR_EMAIL / OPERATOR_NAME / OPERATOR_PASSWORD from .env; re-running is
-# safe, an existing account is left untouched.
-docker exec jawara-gateway python -m app.scripts.create_operator
-```
+Full guide, including credential rotation, bootstrap, backups, and security notes: [`02_Prod_Environtment.md`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/07_How_to_Run/02_Prod_Environtment.md).
 
-All services have health checks; `api-gateway` and `frontend-dashboard` wait on their dependencies via `condition: service_healthy`.
+### Training the threat classifier (optional)
 
-The stack runs with **no third-party API keys at all**. Absent keys are a configuration state, not an error: threat-intel verdicts degrade to `UNKNOWN`, and the LLM falls back to a deterministic composer that still satisfies the four-section reply contract.
+The bot works without this: Detection Rules alone cover the pipeline. Training only adds an extra ML risk signal, and only after a model is explicitly promoted to `PRODUCTION`.
 
-## Production / VPS deployment
-
-Every service except `waha`'s dashboard port binds to `127.0.0.1` — Postgres, Redis, Qdrant, `api-gateway`, `ml-service`, and `frontend-dashboard` are reachable from the host machine (for debugging) but never the public internet, regardless of firewall. Redis in particular has **no authentication mechanism in this codebase at all**, so this binding is the only thing standing between it and the open internet if it were published.
-
-This repo ships no reverse proxy or TLS termination — bring your own (e.g. join the frontend/api-gateway containers to an existing Nginx Proxy Manager network and point proxy hosts at `jawara-dashboard:3000` / `jawara-gateway:8000` by container name, over Docker's internal DNS, not a published host port).
-
-Before exposing this publicly:
-- Rotate every `changeme`/default-looking credential in `.env` — WAHA dashboard password, Postgres password, `ML_SERVICE_API_KEY`, `USER_HASH_SALT`, operator password.
-- Set `CORS_ALLOW_ORIGINS` to the real frontend origin(s) and `NEXT_PUBLIC_API_URL` to the real API origin — the latter is baked in at Docker **build** time (a build arg, not just runtime env), so `frontend-dashboard` needs `docker compose up -d --build frontend-dashboard` after changing it, not just a restart.
-- `./scripts/backup.sh` — Postgres dump + Qdrant snapshot to `backups/<timestamp>/` (gitignored). No scheduling built in; wire it into cron/systemd-timer yourself.
+Full guide, including dataset prep and the ≥80% accuracy workflow: [`03_How_To_Train_AI.md`](./obsidian-docs/Gemastik%202026%20-%20Software%20Dev/07_How_to_Run/03_How_To_Train_AI.md).
 
 ## Status
 
-The detection pipeline runs end to end — webhook in, WhatsApp reply out, audit row written. Verified against the live stack: intent classification, RAG retrieval at 0.87 similarity against real Qdrant, risk assessment, response generation, and a `message_logs` row that survives webhook retries without duplicating.
+**Working end to end:** webhook in, intent classification, RAG retrieval (0.87 similarity against real Qdrant), risk assessment, response generation, WhatsApp reply out, audit row written (survives webhook retries without duplicating).
 
-Operator auth and the threat/alert/incident/detection-rule/policy/user/knowledge/dataset/training-job/model-evaluation domain tables all exist, with backend endpoints and a matching Control Panel page for each (`frontend/app/(panel)/`) — no mock data, every page is wired to a real endpoint.
+**Fully wired, no mock data:** operator auth, and all Control Panel domains (threats, alerts, incidents, detection rules, policies, users, knowledge base, datasets, training jobs, model evaluation). Every page in `frontend/app/(panel)/` calls a real backend endpoint.
 
-The threat classifier (`ml-service/app/models/classifier.py`, TF-IDF + LogisticRegression) is real: `/v1/train`, `/v1/evaluate`, `/v1/classify` all run genuine training/scoring against a checksum-verified artifact, and `app.pipeline.orchestrator` calls it as an additive risk signal — but only once an operator has explicitly promoted a model to `PRODUCTION` on the Models page (never automatic, per `07_Model_Registry_and_Deployment.md` §3-4). No real labeled corpus exists yet — `app.scripts.seed_dataset_samples` seeds a synthetic Indonesian dataset good enough to prove the pipeline, not production-grade accuracy.
+**Threat classifier is real but optional:** TF-IDF + LogisticRegression (`ml-service/app/models/classifier.py`). Training, evaluation, and classification all run for real against a checksum-verified model artifact. It only affects live traffic after an operator explicitly promotes a model to `PRODUCTION` (never automatic). No real labeled corpus exists yet, `app.scripts.seed_dataset_samples` only seeds a synthetic dataset good enough to prove the pipeline works, not production accuracy.
 
-What does not exist yet: OCR, enforcement of security policies against live messages (CRUD/lifecycle exists; matching policies to messages is a separate follow-up — see `app.services.policies`), and operator RBAC (auth is email+password/bearer session only, every operator has equal access; roles are Phase 3).
+**Not built yet:** OCR, enforcement of security policies against live messages (the CRUD/lifecycle exists, matching policies to messages is a separate follow-up), and operator RBAC (every operator currently has equal access, roles are Phase 3).
 
-Feature scope (MVP / Post-MVP / Optional / Deferred) and per-feature implementation status live in `obsidian-docs/.../01_Overview/05_Product_Scope_and_Roadmap.md`. Sprint 1 completion notes, including what could not be verified and why, are in `obsidian-docs/.../06_Tasks/Task_Note/`.
+**Still undecided:** backend dependency toolchain (`uv` vs `pip`), live-activity transport, retention policy for plaintext message content, and the WAHA send timeout versus the 3-second end-to-end target. LLM provider is decided: Anthropic Claude Haiku, contract kept provider-agnostic.
 
-Open decisions: backend dependency toolchain (`uv` vs `pip`), live-activity transport, retention policy for plaintext message content, and the WAHA send timeout versus the 3-second end-to-end target. The LLM provider decision is closed — Anthropic Claude Haiku, with the contract kept provider-agnostic.
+Details: feature scope and per-feature status in `obsidian-docs/.../01_Overview/05_Product_Scope_and_Roadmap.md`; Sprint 1 completion notes in `obsidian-docs/.../06_Tasks/Task_Note/`.

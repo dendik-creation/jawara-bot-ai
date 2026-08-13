@@ -25,6 +25,7 @@ import asyncpg
 from app.clients.ml_client import MlClient
 from app.core.config import Settings, get_settings
 from app.services.audit import record_audit
+from app.services.datasets import add_sample
 
 logger = logging.getLogger("app.services.feedback")
 
@@ -159,3 +160,95 @@ async def list_feedback(
         await conn.close()
 
     return {"total": total, "items": [_row_to_item(row) for row in rows]}
+
+
+async def promote_to_dataset(
+    dataset_id: str,
+    added_by: str,
+    *,
+    feedback_type: str | None = None,
+    limit: int = 100,
+    settings: Settings | None = None,
+) -> dict[str, Any] | None:
+    """Batch-promote reviewed feedback into `dataset_samples` — the
+    active-learning loop's closing step (19_Active_Learning_Strategy):
+    human confirms/corrects via Threats, an operator later triggers this to
+    fold validated feedback into training data. Never automatic.
+
+    Label derivation is a direct fact, not a guess: `FALSE_POSITIVE` means
+    the operator asserted the message was not a threat -> `NOT_A_THREAT`;
+    `CONFIRM` means the operator agreed with `original_classification` ->
+    that same label. A `CONFIRM` row with no `original_classification`
+    (message was never auto-classified) has nothing to promote and is
+    skipped, not guessed at.
+
+    Idempotent: feedback already linked to a sample via `source_feedback_id`
+    is excluded, so re-running only picks up feedback recorded since the
+    last run. `None` if the dataset doesn't exist; raises `ValueError` if
+    it isn't `DRAFT` (mirrors `add_sample`'s own guard).
+    """
+    settings = settings or get_settings()
+
+    conn = await _connect(settings)
+    try:
+        dataset_status = await conn.fetchval("SELECT status::text FROM datasets WHERE id = $1", dataset_id)
+        if dataset_status is None:
+            return None
+        if dataset_status != "DRAFT":
+            raise ValueError(f"cannot promote feedback into a dataset in status {dataset_status}")
+
+        rows = await conn.fetch(
+            """
+            SELECT f.id, f.message_log_id, f.original_classification::text AS original_classification,
+                   f.feedback_type::text AS feedback_type, m.extracted_text
+            FROM operator_feedback f
+            JOIN message_logs m ON m.id = f.message_log_id
+            WHERE NOT EXISTS (SELECT 1 FROM dataset_samples ds WHERE ds.source_feedback_id = f.id)
+              AND ($1::feedback_type_enum IS NULL OR f.feedback_type = $1::feedback_type_enum)
+            ORDER BY f.created_at
+            LIMIT $2
+            """,
+            feedback_type,
+            limit,
+        )
+    finally:
+        await conn.close()
+
+    promoted = 0
+    skipped_reasons: dict[str, int] = {}
+
+    def _skip(reason: str) -> None:
+        skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+
+    for row in rows:
+        if row["feedback_type"] == "FALSE_POSITIVE":
+            label = "NOT_A_THREAT"
+        else:
+            label = row["original_classification"]
+            if label is None:
+                _skip("confirm_without_original_classification")
+                continue
+
+        text = row["extracted_text"]
+        if not text or not text.strip():
+            _skip("empty_message_text")
+            continue
+
+        await add_sample(
+            dataset_id,
+            text,
+            label,
+            added_by,
+            source_message_log_id=str(row["message_log_id"]),
+            source_feedback_id=str(row["id"]),
+            settings=settings,
+        )
+        promoted += 1
+
+    return {
+        "dataset_id": dataset_id,
+        "considered": len(rows),
+        "promoted": promoted,
+        "skipped": sum(skipped_reasons.values()),
+        "skipped_reasons": skipped_reasons,
+    }

@@ -222,6 +222,61 @@ def test_add_sample_rejects_dataset_not_draft(monkeypatch):
     assert response.status_code == 400
 
 
+def test_promote_feedback_writes_audit_log(monkeypatch):
+    result = {
+        "dataset_id": DATASET_ID,
+        "considered": 3,
+        "promoted": 2,
+        "skipped": 1,
+        "skipped_reasons": {"empty_message_text": 1},
+    }
+    monkeypatch.setattr("app.services.feedback.promote_to_dataset", AsyncMock(return_value=result))
+    audit_mock = AsyncMock()
+    monkeypatch.setattr("app.api.v1.endpoints.datasets.record_audit", audit_mock)
+
+    response = client.post(f"/api/v1/datasets/{DATASET_ID}/promote-feedback", json={})
+
+    assert response.status_code == 200
+    assert response.json()["promoted"] == 2
+    assert audit_mock.await_args.kwargs["action"] == "dataset.feedback_promoted"
+    assert audit_mock.await_args.kwargs["metadata"]["promoted"] == 2
+
+
+def test_promote_feedback_404s_when_dataset_missing(monkeypatch):
+    monkeypatch.setattr("app.services.feedback.promote_to_dataset", AsyncMock(return_value=None))
+
+    response = client.post(f"/api/v1/datasets/{DATASET_ID}/promote-feedback", json={})
+
+    assert response.status_code == 404
+
+
+def test_promote_feedback_400s_on_non_draft_dataset(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.feedback.promote_to_dataset",
+        AsyncMock(side_effect=ValueError("cannot promote feedback into a dataset in status VALIDATED")),
+    )
+
+    response = client.post(f"/api/v1/datasets/{DATASET_ID}/promote-feedback", json={})
+
+    assert response.status_code == 400
+
+
+def test_promote_feedback_passes_filter_and_limit_through(monkeypatch):
+    mock = AsyncMock(
+        return_value={"dataset_id": DATASET_ID, "considered": 0, "promoted": 0, "skipped": 0, "skipped_reasons": {}}
+    )
+    monkeypatch.setattr("app.services.feedback.promote_to_dataset", mock)
+    monkeypatch.setattr("app.api.v1.endpoints.datasets.record_audit", AsyncMock())
+
+    response = client.post(
+        f"/api/v1/datasets/{DATASET_ID}/promote-feedback", json={"feedback_type": "CONFIRM", "limit": 50}
+    )
+
+    assert response.status_code == 200
+    assert mock.await_args.kwargs["feedback_type"] == "CONFIRM"
+    assert mock.await_args.kwargs["limit"] == 50
+
+
 def test_remove_sample_404s_when_sample_missing(monkeypatch):
     monkeypatch.setattr("app.services.datasets.remove_sample", AsyncMock(return_value=False))
 

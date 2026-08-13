@@ -35,3 +35,8 @@ class DatasetSampleCreateRequest(BaseModel):
     label: str = Field(min_length=1)
     source_message_log_id: str | None = None
     source_feedback_id: str | None = None
+
+
+class PromoteFeedbackRequest(BaseModel):
+    feedback_type: Literal["CONFIRM", "FALSE_POSITIVE"] | None = None
+    limit: int = Field(default=100, ge=1, le=1000)

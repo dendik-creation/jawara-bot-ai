@@ -6,8 +6,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.core.security import require_operator
-from app.schemas.datasets import DatasetActionRequest, DatasetCreateRequest, DatasetSampleCreateRequest
+from app.schemas.datasets import (
+    DatasetActionRequest,
+    DatasetCreateRequest,
+    DatasetSampleCreateRequest,
+    PromoteFeedbackRequest,
+)
 from app.services import datasets
+from app.services import feedback as feedback_service
 from app.services.audit import record_audit
 from app.services.auth import Operator
 
@@ -131,6 +137,40 @@ async def add_dataset_sample(
         target_id=str(dataset_id),
         result="SUCCESS",
         metadata={"sample_id": result["id"], "label": payload.label},
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    return result
+
+
+@router.post("/datasets/{dataset_id}/promote-feedback")
+async def promote_feedback(
+    dataset_id: UUID,
+    payload: PromoteFeedbackRequest,
+    request: Request,
+    operator: Operator = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        result = await feedback_service.promote_to_dataset(
+            str(dataset_id), operator.id, feedback_type=payload.feedback_type, limit=payload.limit
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
+
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="dataset not found")
+
+    await record_audit(
+        actor_operator_id=operator.id,
+        action="dataset.feedback_promoted",
+        target_type="dataset",
+        target_id=str(dataset_id),
+        result="SUCCESS",
+        metadata={
+            "promoted": result["promoted"],
+            "skipped": result["skipped"],
+            "feedback_type": payload.feedback_type,
+        },
         ip_address=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )

@@ -146,13 +146,16 @@ class Settings(BaseSettings):
     # deterministic heuristic wins the race against the client giving up.
     ml_timeout_extract_claim_seconds: float = 7.0
     ml_timeout_generate_seconds: float = 8.0
-    # train/evaluate run a synchronous scikit-learn fit/predict over the whole
-    # dataset in-process (classifier.py) — not bounded by the <3.0s pipeline
-    # budget above, since these run in the celery training/evaluation queues,
-    # not the message pipeline. Sized for real-world sample counts (thousands
-    # of rows), not just the tiny seed_dataset_samples fixture.
-    ml_timeout_train_seconds: float = 60.0
-    ml_timeout_evaluate_seconds: float = 30.0
+    # train/evaluate run a scikit-learn fit/predict over the whole dataset in
+    # ml-service (classifier.py, offloaded to a thread there so it no longer
+    # blocks that process's single event loop) — not bounded by the <3.0s
+    # pipeline budget above, since these run in the celery training/evaluation
+    # queues, not the message pipeline. Sized for real-world sample counts
+    # (tens of thousands of rows, full-length article text), not just the
+    # tiny seed_dataset_samples fixture — 60s measured as too tight against
+    # the actual indonesia_hoax_news corpus even with bounded TF-IDF vocab.
+    ml_timeout_train_seconds: float = 300.0
+    ml_timeout_evaluate_seconds: float = 120.0
     ml_enabled: bool = True
 
     # RAG retrieval contract, fixed by 03_Database/02_VectorDB_Specifications.md.

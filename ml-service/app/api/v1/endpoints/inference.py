@@ -5,6 +5,7 @@ which model decided something, and "the model we happened to be running that
 week" is not an answer.
 """
 
+import asyncio
 import logging
 import uuid
 from collections import Counter
@@ -283,10 +284,14 @@ async def train_model(request: MlRequest) -> MlResponse:
 
     model_version = f"clf-{uuid.uuid4().hex[:12]}"
     with Timer() as timer:
-        model = classifier_module.train(samples)
-        artifact_sha256 = classifier_module.save(model, _artifact_path(model_version))
+        # single uvicorn worker (Dockerfile) — a synchronous sklearn fit here
+        # would block every other in-flight request (classify/generate for
+        # the live bot included) for the whole training run. to_thread keeps
+        # the event loop free.
+        model = await asyncio.to_thread(classifier_module.train, samples)
+        artifact_sha256 = await asyncio.to_thread(classifier_module.save, model, _artifact_path(model_version))
         registry.register_classifier(model_version, artifact_sha256, model)
-        train_metrics = model.evaluate(samples)
+        train_metrics = await asyncio.to_thread(model.evaluate, samples)
 
     return envelope(
         request.request_id,
@@ -319,8 +324,9 @@ async def evaluate_model(request: MlRequest) -> MlResponse:
     samples = _parse_samples(dataset)
 
     with Timer() as timer:
-        model = _load_classifier(model_version, expected_sha256)
-        metrics = model.evaluate(samples)
+        # same reasoning as /train: keep this off the single event loop.
+        model = await asyncio.to_thread(_load_classifier, model_version, expected_sha256)
+        metrics = await asyncio.to_thread(model.evaluate, samples)
 
     return envelope(request.request_id, metrics, model_version, timer.elapsed_ms, confidence=metrics.get("accuracy"))
 

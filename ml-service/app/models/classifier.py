@@ -36,10 +36,19 @@ def _build_pipeline() -> Pipeline:
     features = FeatureUnion(
         [
             # Word-level: catches topical vocabulary ("transfer", "admin", "menang").
-            ("word", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=1)),
+            # min_df=2 drops words seen in only one document — pure noise for a
+            # classifier, and the single biggest source of vocab bloat once
+            # real documents (full news articles, not short WA messages) enter
+            # the corpus. max_features caps the matrix regardless of corpus
+            # size, so fit time stays bounded even as the dataset grows.
+            ("word", TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=2, max_features=50_000)),
             # Char-level: robust to the typos/slang/spacing variation Indonesian
-            # WhatsApp text is full of, and to unseen word forms at inference time.
-            ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=1)),
+            # WhatsApp text is full of, and to unseen word forms at inference
+            # time. Same min_df/max_features reasoning — char_wb(3,5) over
+            # thousands of full-length articles otherwise generates a
+            # multi-million-entry vocabulary and the fit no longer finishes in
+            # seconds.
+            ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2, max_features=50_000)),
         ]
     )
     classifier = LogisticRegression(max_iter=1000, class_weight="balanced")

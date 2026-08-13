@@ -28,6 +28,7 @@ auto-repaired.
 import asyncio
 import csv
 import logging
+import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -42,7 +43,17 @@ logger = logging.getLogger("app.scripts.import_hoax_corpus")
 
 _DATASET_NAME = "indonesia-hoax-corpus-import"
 _DATASET_VERSION = 1
-_CORPUS_DIR = Path(__file__).resolve().parents[3] / "datasets" / "indonesia_hoax_news"
+# `parents[3]` only lands on the repo root in local dev, where this file sits
+# at <repo>/backend/app/scripts/. Inside the container the same source tree
+# is copied to /app/app/scripts/ (backend/ is the Dockerfile build context,
+# so one path segment is missing) — HOAX_CORPUS_DIR overrides for that case,
+# set in docker-compose.yml alongside the ./datasets bind mount, since
+# datasets/ is never baked into the image.
+_CORPUS_DIR = (
+    Path(os.environ["HOAX_CORPUS_DIR"])
+    if "HOAX_CORPUS_DIR" in os.environ
+    else Path(__file__).resolve().parents[3] / "datasets" / "indonesia_hoax_news"
+)
 
 _LEGIT_FILES = ("antaranews_cleaned_v3.csv", "detik_cleaned_v3.csv", "kompas_cleaned_v3.csv")
 _HOAX_FILE = "tbh_cleaned_v3.csv"

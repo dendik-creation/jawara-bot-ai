@@ -69,6 +69,13 @@ services:
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS}
       - LOG_MESSAGE_CONTENT=${LOG_MESSAGE_CONTENT}
       - LOG_LEVEL=${LOG_LEVEL}
+      # Read by app.scripts.import_hoax_corpus / split_hoax_corpus — the
+      # ./datasets bind mount below, not something baked into the image.
+      - HOAX_CORPUS_DIR=/app/datasets/indonesia_hoax_news
+    volumes:
+      # Raw training-data corpus. Read-only, host-provided — never baked into
+      # the image (backend/ is the build context, datasets/ is its sibling).
+      - ./datasets:/app/datasets:ro
     depends_on:
       postgres:
         condition: service_healthy

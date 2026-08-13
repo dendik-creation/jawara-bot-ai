@@ -18,6 +18,7 @@ from app.llm.base import LlmProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 from app.llm.template_provider import TemplateProvider
 from app.models import classifier as classifier_module
+from app.models.ocr import OCRProvider, TesseractOCRProvider
 
 logger = logging.getLogger("app.models.registry")
 
@@ -28,6 +29,7 @@ class ModelRegistry:
         self._llms: dict[str, LlmProvider] = {}
         # Keyed by (model_version, expected_sha256) — see `classifier()`.
         self._classifiers: dict[tuple[str, str], classifier_module.TrainedClassifier] = {}
+        self._ocr: OCRProvider | None = None
         self.active_embedder: str = ""
         self.active_llm: str = ""
         self.loaded = False
@@ -43,6 +45,12 @@ class ModelRegistry:
         llm = self._build_llm(settings)
         self._llms[llm.model_version] = llm
         self.active_llm = llm.model_version
+
+        # OCR is cheap to construct (no weights loaded here, just config —
+        # Tesseract itself is invoked per request as a subprocess), so it is
+        # built eagerly like the embedder/LLM rather than lazily like the
+        # classifier.
+        self._ocr = self._build_ocr(settings)
 
         # Classifiers are not preloaded — which versions exist is driven by
         # the gateway's training jobs, not by static config, so they are
@@ -90,11 +98,25 @@ class ModelRegistry:
             return OpenAICompatibleProvider(settings)
         return TemplateProvider()
 
+    def _build_ocr(self, settings: Settings) -> OCRProvider:
+        # "tesseract" is the only provider today; an unrecognised value falls
+        # back to it rather than failing startup, the same posture
+        # `_build_embedder`/`_build_llm` take for their own provider switches.
+        return TesseractOCRProvider(
+            languages=settings.ocr_languages,
+            retry_confidence_threshold=settings.ocr_retry_confidence_threshold,
+            max_text_length=settings.ocr_max_text_length,
+        )
+
     def embedder(self, model_version: str | None = None) -> Embedder:
         return self._embedders[model_version or self.active_embedder]
 
     def llm(self, model_version: str | None = None) -> LlmProvider:
         return self._llms[model_version or self.active_llm]
+
+    def ocr(self) -> OCRProvider:
+        assert self._ocr is not None, "registry.load() must run before registry.ocr()"
+        return self._ocr
 
     def classifier(self, model_version: str, expected_sha256: str) -> classifier_module.TrainedClassifier:
         """Load-and-cache, or raise. Never returns an artifact whose checksum
@@ -133,6 +155,7 @@ class ModelRegistry:
             "llm": self.active_llm,
             "llms": sorted(self._llms),
             "classifiers_loaded": sorted(f"{version}:{sha[:12]}" for version, sha in self._classifiers),
+            "ocr": self._ocr.model_version if self._ocr else None,
             "degraded_reasons": self.degraded_reasons,
         }
 

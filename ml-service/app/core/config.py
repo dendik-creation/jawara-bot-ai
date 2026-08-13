@@ -97,6 +97,32 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
 
+    # --- OCR (app/models/ocr.py) -------------------------------------------
+    # Self-hosted, CPU-only, no external API dependency — matches the
+    # offline-by-default posture the rest of this service already takes
+    # (hash embedder, template LLM composer). "tesseract" is the only
+    # provider implemented; the OCRProvider interface exists so a second one
+    # is a new class registered in registry.py, not a rewrite of the
+    # endpoint.
+    ocr_provider: str = "tesseract"
+    # Tesseract's own `+`-joined language list — Indonesian first, since most
+    # traffic is Indonesian WhatsApp forwards.
+    ocr_languages: str = "ind+eng"
+    ocr_max_image_size_mb: float = 10.0
+    ocr_max_width: int = 4096
+    ocr_max_height: int = 4096
+    # Wall-clock budget for one OCR call, including the bounded retry below.
+    # asyncio.wait_for at the endpoint enforces this even if pytesseract's own
+    # subprocess call hangs.
+    ocr_timeout_seconds: float = 15.0
+    ocr_max_text_length: int = 10000
+    # Below this the endpoint attempts exactly one retry with heavier
+    # preprocessing (grayscale + autocontrast) before giving up on a better
+    # reading. Deliberately lower than the gateway's OCR_MIN_CONFIDENCE (the
+    # accept/flag line) — this is "worth trying again", not "good enough to
+    # trust".
+    ocr_retry_confidence_threshold: float = 0.35
+
     # --- Threat classifier --------------------------------------------------
     # Where trained classifier artifacts (`{model_version}.joblib`) live.
     # Mounted on a named volume in docker-compose.yml so training survives a

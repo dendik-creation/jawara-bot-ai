@@ -4,7 +4,7 @@ import pytest
 
 from app.clients.ml_client import MlClient, MlServiceError
 from app.core.config import Settings
-from tests.http_stub import FakeResponse, patch_httpx, raise_connect_error
+from tests.http_stub import FakeResponse, patch_httpx, raise_connect_error, raise_timeout
 
 REQUEST_ID = "false_628111@c.us_ABCDEF"
 
@@ -148,3 +148,66 @@ async def test_extract_claim_is_retried_like_the_other_idempotent_calls(monkeypa
 
     assert len(attempts) == 2
     assert response.result["method"] == "heuristic"
+
+
+async def test_ocr_sends_multipart_not_json(monkeypatch):
+    """The one endpoint that breaks the JSON envelope every other call uses —
+    images go as multipart/binary (05_Audit/02_Architecture_Audit_ML_Decoupling.md)."""
+    calls = patch_httpx(
+        monkeypatch,
+        "app.clients.ml_client",
+        lambda **_: ok({"text": "BREAKING NEWS", "success": True, "language": "ind+eng", "error": None}),
+    )
+
+    response = await MlClient(ml_settings()).ocr(REQUEST_ID, b"\xff\xd8\xff...", "screenshot.jpg", "image/jpeg")
+
+    assert calls[0]["url"] == "http://ml-service:9000/v1/ocr"
+    assert "json" not in calls[0]
+    assert calls[0]["data"] == {"request_id": REQUEST_ID}
+    assert calls[0]["files"] == {"image": ("screenshot.jpg", b"\xff\xd8\xff...", "image/jpeg")}
+    assert response.result["text"] == "BREAKING NEWS"
+
+
+async def test_ocr_is_never_retried(monkeypatch):
+    """Unlike `extract_claim`/`embed`, a retry re-uploads the image and re-runs
+    a CPU-bound OCR pass — the cost the client must not spend blindly."""
+    calls = patch_httpx(monkeypatch, "app.clients.ml_client", raise_connect_error)
+
+    with pytest.raises(MlServiceError) as excinfo:
+        await MlClient(ml_settings()).ocr(REQUEST_ID, b"bytes", "x.png", "image/png")
+
+    assert len(calls) == 1
+    assert excinfo.value.error_code == "ocr_unreachable"
+
+
+async def test_ocr_timeout_is_reported_as_a_structured_error(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.ml_client", raise_timeout)
+
+    with pytest.raises(MlServiceError) as excinfo:
+        await MlClient(ml_settings()).ocr(REQUEST_ID, b"bytes", "x.png", "image/png")
+
+    assert excinfo.value.error_code == "ocr_timeout"
+    assert excinfo.value.retryable is False
+
+
+async def test_ocr_structured_rejection_is_parsed(monkeypatch):
+    patch_httpx(
+        monkeypatch,
+        "app.clients.ml_client",
+        lambda **_: FakeResponse(422, {"error_code": "ocr_invalid_image", "message": "unsupported_format", "retryable": False}),
+    )
+
+    with pytest.raises(MlServiceError) as excinfo:
+        await MlClient(ml_settings()).ocr(REQUEST_ID, b"not an image", "x.gif", "image/gif")
+
+    assert excinfo.value.error_code == "ocr_invalid_image"
+
+
+async def test_ocr_disabled_ml_service_fails_fast(monkeypatch):
+    calls = patch_httpx(monkeypatch, "app.clients.ml_client", lambda **_: ok({}))
+
+    with pytest.raises(MlServiceError) as excinfo:
+        await MlClient(ml_settings(ml_enabled=False)).ocr(REQUEST_ID, b"bytes", "x.png", "image/png")
+
+    assert excinfo.value.error_code == "ml_disabled"
+    assert calls == []

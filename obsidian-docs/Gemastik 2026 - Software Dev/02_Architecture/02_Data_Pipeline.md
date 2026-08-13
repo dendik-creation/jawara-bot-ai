@@ -55,11 +55,19 @@ flowchart TD
 2. Gateway memverifikasi header `X-Api-Key`, lalu menerapkan rate limit sliding-window Redis per `(session, chat_id)` — default 20 request / 60 detik, balas `429` + `Retry-After` bila terlampaui.
 3. Gateway membalas `200 OK` cepat dan melempar payload ke Redis queue; Celery worker mengonsumsi secara asinkron. Rate limiter **fail open** bila Redis tidak reachable (kegagalan dicatat di log).
 
+### Tahap 3c — OCR / Image Input (Implemented, feature-flagged)
+
+Sebelum normalisasi teks berjalan: jika pesan WAHA membawa lampiran gambar (`payload.media` bertipe `image/*`, dari `_image_attachment()` di `app/pipeline/orchestrator.py`) dan `OCR_ENABLED=true`, gateway mengambil bytes gambar (`media.data` base64 inline, atau `media.url` lewat `WahaClient.download_media()`), memvalidasi ukurannya, lalu memanggil `MlClient.ocr()` → ML Service `POST /v1/ocr` (Tesseract, `ind+eng`, lihat [[04_ML_Service]]).
+
+Teks hasil OCR digabung ke `body` **sebelum** Tahap 4 berjalan — sisa pipeline (normalisasi, deteksi, claim extraction dengan injection guard-nya, RAG, verifikasi) tidak tahu dan tidak perlu tahu bahwa pesan ini berasal dari gambar. OCR gagal atau tidak menemukan teks apa pun tidak pernah mengarang klaim — pesan jatuh ke jalur "tidak ada yang bisa diperiksa" yang sama seperti pesan teks kosong, berakhir di `UNKNOWN`, bukan `HOAX`. `input_type_enum.IMAGE_OCR` dicatat di `message_logs` hanya ketika OCR benar-benar menghasilkan teks yang dipakai.
+
+`OCR_ENABLED=false` (default produksi saat rollout) membuat lampiran gambar diperlakukan persis seperti tipe file yang tidak dikenali — perilaku pesan teks sama sekali tidak berubah.
+
 ### Tahap 4 — Message Processing (Implemented)
 
 Normalisasi teks Bahasa Indonesia (`app/pipeline/normalizer.py`), ekstraksi URL/domain termasuk deteksi shortlink dan link yang di-defang (`app/pipeline/url_extractor.py`), deteksi lampiran `.apk` dari payload WAHA.
 
-Belum ada: ekstraksi indicator finansial (nomor rekening / e-wallet — Post-MVP) dan OCR gambar (dijalankan di ML Service, endpoint `/v1/ocr` belum dibuat).
+Belum ada: ekstraksi indicator finansial (nomor rekening / e-wallet — Post-MVP).
 
 ### Tahap 5 — Rules + ML (Partial)
 

@@ -51,7 +51,7 @@ Versi di path (`/v1/...`). Setiap request membawa `request_id` yang sama dengan 
 | Endpoint | Fungsi | Status |
 | :--- | :--- | :--- |
 | `POST /v1/classify` | Klasifikasi ancaman + confidence | Planned — menjawab `model_not_available` (belum ada model terlatih); gateway jatuh ke Detection Rules |
-| `POST /v1/ocr` | Ekstraksi teks dari gambar/flyer | Planned — OCR di luar scope Sprint 1 |
+| `POST /v1/ocr` | Ekstraksi teks dari gambar/flyer (Tesseract, `ind+eng`) | Implemented — feature-flagged lewat `OCR_ENABLED` di gateway (default `false`); satu-satunya endpoint yang menerima `multipart/form-data`, bukan amplop JSON `{request_id, payload, metadata}`, karena payload-nya biner (lihat [[02_Architecture_Audit_ML_Decoupling]]). OCR hanya mengubah modalitas input — teks hasil ekstraksi mengalir lewat pipeline teks yang sudah ada (normalisasi → claim extraction dengan injection guard-nya → RAG → verifikasi) dan tidak pernah menentukan verdict sendiri, serta tidak pernah menyentuh model classifier produksi yang terkunci. |
 | `POST /v1/embed` | Teks → vektor | Implemented |
 | `POST /v1/extract-claim` | Pesan forward → satu kalimat klaim kanonik, sebelum retrieval | Implemented — LLM bila terkonfigurasi, heuristik deterministik sebagai default offline dan fallback ([[03_Knowledge_Base]] §9) |
 | `POST /v1/rag-query` | Embed + similarity search Qdrant + re-ranking reliability/recency + rakit konteks, satu panggilan | Implemented |

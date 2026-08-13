@@ -196,6 +196,63 @@ class MlClient:
             },
         )
 
+    async def ocr(
+        self,
+        request_id: str,
+        image: bytes,
+        filename: str,
+        mimetype: str,
+        language: str | None = None,
+    ) -> MlResponse:
+        """Extract text from one image attachment.
+
+        The one endpoint that breaks the `{request_id, payload, metadata}` JSON
+        envelope every other call here uses: images go as multipart/binary, not
+        base64-in-JSON (05_Audit/02_Architecture_Audit_ML_Decoupling.md — base64
+        inflates the payload ~33% and adds JSON parse cost for what is otherwise
+        a binary upload). `result` still comes back in the usual shape
+        (`text`, `success`, `language`, `error`), `confidence`/`model_version`
+        in their usual top-level fields.
+
+        Single attempt, never retried: unlike `embed`/`rag-query`, a retry here
+        re-uploads the image and re-runs a CPU-bound OCR pass for a result that
+        will not have changed — the cost is the caller's to avoid, not
+        ml-service's to protect against.
+        """
+        if not self.enabled:
+            raise MlServiceError("ml_disabled", "ML Service calls are disabled by config", retryable=False)
+
+        url = f"{self._settings.ml_service_url.rstrip('/')}/v1/ocr"
+        data: dict[str, str] = {"request_id": request_id}
+        if language:
+            data["language"] = language
+        files = {"image": (filename, image, mimetype)}
+
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.ml_timeout_ocr_seconds) as client:
+                response = await client.post(
+                    url,
+                    data=data,
+                    files=files,
+                    headers={"X-Internal-Api-Key": self._settings.ml_service_api_key},
+                )
+        except httpx.TimeoutException as exc:
+            raise MlServiceError("ocr_timeout", str(exc), retryable=False) from exc
+        except httpx.HTTPError as exc:
+            raise MlServiceError("ocr_unreachable", str(exc), retryable=False) from exc
+
+        if response.status_code >= 400:
+            raise _error_from_response(response)
+
+        body = response.json()
+        return MlResponse(
+            request_id=body.get("request_id", request_id),
+            result=body.get("result") or {},
+            model_version=body.get("model_version", "unknown"),
+            confidence=body.get("confidence"),
+            latency_ms=body.get("latency_ms"),
+        )
+
     async def upsert_knowledge(self, request_id: str, items: list[dict[str, Any]]) -> MlResponse:
         """Embed and store fact items in Qdrant.
 

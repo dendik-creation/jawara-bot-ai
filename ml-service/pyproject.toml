@@ -11,7 +11,15 @@ dependencies = [
     "fastapi==0.110.0",
     "httpx==0.27.0",
     "joblib==1.5.3",
+    # Image decode/validate/preprocess for OCR (app/models/ocr.py).
+    "pillow==12.3.0",
     "pydantic-settings==2.2.1",
+    # Required by FastAPI to parse the multipart/form-data body /v1/ocr uses
+    # instead of the JSON envelope every other endpoint takes.
+    "python-multipart==0.0.20",
+    # Thin wrapper around the `tesseract` binary installed in the Docker
+    # image (see Dockerfile) — not a bundled OCR engine of its own.
+    "pytesseract==0.3.13",
     "qdrant-client==1.8.2",
     "scikit-learn==1.9.0",
     "uvicorn[standard]==0.27.1",

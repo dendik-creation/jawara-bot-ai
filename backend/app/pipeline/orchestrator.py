@@ -13,6 +13,8 @@ reply still leaves an audit row. The one thing the pipeline never does is claim
 more certainty than it has — `UNKNOWN` never renders as "safe".
 """
 
+import base64
+import binascii
 import logging
 import time
 from dataclasses import dataclass, field
@@ -116,6 +118,11 @@ class PipelineOutcome:
     reranked: bool = False
     ml_category: str | None = None
     ml_confidence: float | None = None
+    # Diagnostics for "did this message start as a picture" — logged, not
+    # persisted (17_Database: no new column unless one earns its keep;
+    # `input_type=IMAGE_OCR` on the audit row already records the modality).
+    ocr_used: bool = False
+    ocr_confidence: float | None = None
     response_dispatched: bool = False
     response_latency_ms: int | None = None
     logged: bool = False
@@ -135,6 +142,8 @@ class PipelineOutcome:
             "reranked": self.reranked,
             "ml_category": self.ml_category,
             "ml_confidence": self.ml_confidence,
+            "ocr_used": self.ocr_used,
+            "ocr_confidence": self.ocr_confidence,
             "response_dispatched": self.response_dispatched,
             "response_latency_ms": self.response_latency_ms,
             "logged": self.logged,
@@ -163,9 +172,65 @@ def _attachment_names(payload: dict[str, Any]) -> list[str]:
     return names
 
 
-def _input_type(urls_found: int, apk: bool) -> InputType:
+_IMAGE_MIME_PREFIX = "image/"
+
+
+@dataclass(frozen=True)
+class ImageAttachment:
+    """One image WAHA attached to a message, however that engine reports it."""
+
+    mimetype: str
+    filename: str
+    url: str | None = None
+    data: bytes | None = None
+
+
+def _image_attachment(payload: dict[str, Any]) -> ImageAttachment | None:
+    """The image attachment on this message, if any — across WAHA engine shapes.
+
+    WAHA reports media two ways depending on its own `downloadMedia` webhook
+    setting: a `media.url` to fetch, or the bytes already inline as
+    `media.data` (base64). Neither is assumed; either is accepted. `type ==
+    "image"` or an `image/*` mimetype both count as "this is a picture" —
+    WEBJS and NOWEB spell the field slightly differently.
+
+    Returns `None` for anything that isn't a fetchable image, including a
+    payload that merely *claims* to be one but carries neither a URL nor
+    inline bytes — there is nothing this pipeline could OCR from that.
+    """
+    media = payload.get("media")
+    media = media if isinstance(media, dict) else {}
+    mimetype = str(media.get("mimetype") or payload.get("mimetype") or "")
+    is_image = mimetype.lower().startswith(_IMAGE_MIME_PREFIX) or payload.get("type") == "image"
+    if not is_image:
+        return None
+
+    filename = str(
+        media.get("filename")
+        or media.get("fileName")
+        or payload.get("filename")
+        or payload.get("fileName")
+        or "image"
+    )
+    url = media.get("url") if isinstance(media.get("url"), str) and media.get("url") else None
+    data: bytes | None = None
+    raw_data = media.get("data")
+    if isinstance(raw_data, str) and raw_data:
+        try:
+            data = base64.b64decode(raw_data, validate=False)
+        except (binascii.Error, ValueError):
+            data = None
+
+    if not url and not data:
+        return None
+    return ImageAttachment(mimetype=mimetype or "image/jpeg", filename=filename, url=url, data=data)
+
+
+def _input_type(urls_found: int, apk: bool, image_ocr: bool = False) -> InputType:
     if apk:
         return InputType.FILE_APK
+    if image_ocr:
+        return InputType.IMAGE_OCR
     if urls_found:
         return InputType.URL_LINK
     return InputType.TEXT
@@ -204,9 +269,13 @@ async def process_message_job(
     body = payload.get("body") or payload.get("caption") or ""
     attachments = _attachment_names(payload)
     quoted_id = group_policy.quoted_message_id(payload)
-    if not body.strip() and not attachments and not quoted_id:
+    image_attachment = _image_attachment(payload)
+    if not body.strip() and not attachments and not quoted_id and not image_attachment:
         outcome.status = "ignored_empty_body"
         return outcome.as_dict()
+
+    ml = MlClient(settings)
+    request_id = message.waha_message_id or f"{message.session}:{chat_id}"
 
     # --- stage 3b: may the bot speak here? -------------------------------
     # Decided before any analysis, deliberately. A group message the bot was not
@@ -263,6 +332,58 @@ async def process_message_job(
             outcome.response_dispatched = send.delivered
             return outcome.as_dict()
 
+    # --- stage 3c: OCR (image input becomes text) -------------------------
+    # Folding OCR text into `body` here — before normalize_text() runs — is
+    # the entire feature: every stage after this line (normalisation, intent
+    # routing, claim extraction with its injection guard, RAG, verification)
+    # runs the exact path a typed message already takes. OCR only changes
+    # which text that path receives; it never produces a verdict itself.
+    if image_attachment and settings.ocr_enabled:
+        max_bytes = int(settings.ocr_max_image_size_mb * 1024 * 1024)
+        image_bytes = image_attachment.data
+        if image_bytes is None and image_attachment.url:
+            image_bytes = await WahaClient(settings).download_media(image_attachment.url)
+
+        if not image_bytes:
+            outcome.degradations.append("ocr_media_unavailable")
+        elif len(image_bytes) > max_bytes:
+            # Cheap, dependency-free rejection at the gateway — no reason to
+            # ship an obviously oversized file to ml-service just to have it
+            # reject the same thing after paying the upload cost.
+            outcome.degradations.append("ocr_image_too_large")
+        else:
+            try:
+                ocr_response = await ml.ocr(
+                    request_id, image_bytes, image_attachment.filename, image_attachment.mimetype
+                )
+            except MlServiceError as exc:
+                outcome.degradations.append(f"ocr_unavailable:{exc.error_code}")
+            else:
+                ocr_result = ocr_response.result
+                ocr_text = str(ocr_result.get("text") or "").strip()
+                ocr_success = bool(ocr_result.get("success", True))
+                if settings.ocr_debug_log:
+                    logger.debug("ocr result", extra={**log_context, "ocr_text": ocr_text})
+                if ocr_success and ocr_text:
+                    body = f"{body}\n\n{ocr_text}".strip() if body.strip() else ocr_text
+                    outcome.ocr_used = True
+                    outcome.ocr_confidence = ocr_response.confidence
+                    if ocr_response.confidence is not None and ocr_response.confidence < settings.ocr_min_confidence:
+                        # Text still flows into the pipeline as real evidence —
+                        # never discarded merely for scoring low — but the
+                        # audit trail records that this reading was shaky
+                        # (13_Low_Confidence_OCR).
+                        outcome.degradations.append("ocr_low_confidence")
+                else:
+                    # No usable text: never fabricate a claim from a picture
+                    # that had nothing readable in it. `body` is left exactly
+                    # as it was (any caption text still goes through
+                    # normally); if there was none either, the message falls
+                    # through to the same "nothing to check" path plain text
+                    # already takes, ending in UNKNOWN/insufficient-evidence,
+                    # never HOAX (12_Empty_Poor_OCR_Handling).
+                    outcome.degradations.append("ocr_empty_result")
+
     # --- stage 4: preprocessing ------------------------------------------
     normalized = normalize_text(body)
     urls = extract_urls(body)
@@ -280,8 +401,6 @@ async def process_message_job(
     outcome.engine = intent.engine
 
     redis = aioredis.from_url(settings.redis_url, socket_connect_timeout=2, decode_responses=True)
-    ml = MlClient(settings)
-    request_id = message.waha_message_id or f"{message.session}:{chat_id}"
 
     matches: list[dict[str, Any]] = []
     url_scan: UrlScanResult | None = None
@@ -472,7 +591,7 @@ async def _write_audit_row(
         waha_session_id=message.session,
         user_hash=hash_user_identifier(chat_id, settings),
         chat_type=chat_type_for(chat_id),
-        input_type=_input_type(outcome.url_count, has_apk),
+        input_type=_input_type(outcome.url_count, has_apk, outcome.ocr_used),
         extracted_text=normalized_raw,
         detected_intent=intent_category,
         risk_score=risk,

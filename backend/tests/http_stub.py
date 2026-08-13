@@ -21,6 +21,7 @@ class FakeResponse:
         json_data: Any = None,
         text: str = "",
         headers: dict[str, str] | None = None,
+        content: bytes = b"",
     ) -> None:
         self.status_code = status_code
         self._json = json_data
@@ -28,6 +29,9 @@ class FakeResponse:
         # Some clients read response headers (Retry-After on a 429); an empty
         # mapping keeps the stub usable for the ones that don't.
         self.headers = headers or {}
+        # Raw bytes for clients that download binary content (media fetches)
+        # rather than parse JSON.
+        self.content = content
 
     def json(self) -> Any:
         if self._json is None:

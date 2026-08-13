@@ -14,6 +14,7 @@ retrying only delays the log line that tells an operator what is wrong.
 import asyncio
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -147,6 +148,44 @@ class WahaClient:
             return None
         text = data.get("body") or data.get("caption")
         return text.strip() if isinstance(text, str) and text.strip() else None
+
+    def _resolve_media_url(self, url: str) -> str:
+        """Rewrite a WAHA-reported media URL onto the WAHA host this client
+        actually reaches.
+
+        WAHA builds the URL in its webhook payload from its own view of its
+        host — commonly `localhost` — which resolves to nothing (or the
+        wrong container) from inside the gateway/worker. `waha_api_url` is
+        the one address already proven reachable (every other call in this
+        client uses it), so the scheme/host are always replaced with it;
+        only the path and query WAHA supplied are kept, since that part
+        names the actual file on the one WAHA server both sides talk to.
+        """
+        configured = urlsplit(self._settings.waha_api_url)
+        parsed = urlsplit(url)
+        path = parsed.path if parsed.scheme else url if url.startswith("/") else f"/{url}"
+        return urlunsplit((configured.scheme, configured.netloc, path, parsed.query, ""))
+
+    async def download_media(self, url: str) -> bytes | None:
+        """Fetch attachment bytes from a WAHA-reported media URL.
+
+        WAHA's media routes sit behind the same `X-Api-Key` as the rest of its
+        REST API — not a separate credential. Returns `None` on any failure
+        (unreachable, expired, 4xx/5xx) so the caller degrades — an image the
+        pipeline can't fetch is treated like an attachment it can't read, never
+        a reason to raise mid-pipeline for a message that may still carry a
+        usable caption.
+        """
+        resolved = self._resolve_media_url(url)
+        try:
+            async with httpx.AsyncClient(timeout=self._settings.waha_send_timeout_seconds) as client:
+                response = await client.get(resolved, headers=self._headers)
+            if response.status_code >= 400:
+                return None
+            return response.content
+        except Exception:  # noqa: BLE001 — a failed download must degrade, not raise
+            logger.warning("waha media download failed", exc_info=True)
+            return None
 
     async def list_sessions(self) -> list[dict[str, object]]:
         """Normalised session list for the Control Panel.

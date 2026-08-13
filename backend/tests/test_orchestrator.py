@@ -5,6 +5,7 @@ intent, what the risk becomes when a stage cannot answer, and whether an audit
 row still lands when something downstream fails.
 """
 
+import base64
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -60,6 +61,9 @@ class FakeMlClient:
         claim=None,
         claim_error=None,
         reranked=True,
+        ocr_result=None,
+        ocr_error=None,
+        ocr_confidence=0.9,
     ):
         self._matches = matches or []
         self._rag_error = rag_error
@@ -70,10 +74,14 @@ class FakeMlClient:
         self._claim = claim
         self._claim_error = claim_error
         self._reranked = reranked
+        self._ocr_result = ocr_result
+        self._ocr_error = ocr_error
+        self._ocr_confidence = ocr_confidence
         self.generate_calls: list[dict] = []
         self.rag_calls: list[str] = []
         self.classify_calls: list[dict] = []
         self.claim_calls: list[str] = []
+        self.ocr_calls: list[dict] = []
 
     async def extract_claim(self, request_id, text, category=None):
         self.claim_calls.append(text)
@@ -102,6 +110,19 @@ class FakeMlClient:
         category, confidence = self._classify_result or ("NOT_A_THREAT", 0.9)
         return MlResponse(request_id, {"category": category}, model_version, confidence=confidence)
 
+    async def ocr(self, request_id, image, filename, mimetype, language=None):
+        self.ocr_calls.append({"filename": filename, "mimetype": mimetype, "size": len(image)})
+        if self._ocr_error:
+            raise self._ocr_error
+        # Default: a successful read of a news-screenshot-shaped image.
+        result = self._ocr_result if self._ocr_result is not None else {
+            "text": "BREAKING NEWS klaim kesehatan viral",
+            "success": True,
+            "language": "ind+eng",
+            "error": None,
+        }
+        return MlResponse(request_id, result, "tesseract-ocr", confidence=self._ocr_confidence)
+
     async def generate(self, request_id, user_text, category, risk_level, context=None, url_verdicts=None):
         self.generate_calls.append(
             {
@@ -118,13 +139,21 @@ class FakeMlClient:
 
 
 class FakeWaha:
-    def __init__(self, delivered: bool = True, bot_ids: frozenset[str] = frozenset(), quoted_text: str | None = None):
+    def __init__(
+        self,
+        delivered: bool = True,
+        bot_ids: frozenset[str] = frozenset(),
+        quoted_text: str | None = None,
+        media_bytes: bytes | None = None,
+    ):
         self.delivered = delivered
         self.sent: list[tuple[str, str]] = []
         self.quoted: list[str | None] = []
         self._bot_ids = bot_ids
         self._quoted_text = quoted_text
+        self._media_bytes = media_bytes
         self.get_message_calls: list[dict] = []
+        self.download_media_calls: list[str] = []
 
     async def send_text(self, chat_id, text, session="default", reply_to=None):
         self.sent.append((chat_id, text))
@@ -137,6 +166,10 @@ class FakeWaha:
     async def get_message_text(self, session, chat_id, message_id):
         self.get_message_calls.append({"session": session, "chat_id": chat_id, "message_id": message_id})
         return self._quoted_text
+
+    async def download_media(self, url):
+        self.download_media_calls.append(url)
+        return self._media_bytes
 
 
 class FakeRedis:
@@ -186,6 +219,17 @@ def rig(monkeypatch):
 
 
 SETTINGS = Settings(user_hash_salt="test-salt", end_to_end_target_ms=3000)
+SETTINGS_OCR = Settings(user_hash_salt="test-salt", end_to_end_target_ms=3000, ocr_enabled=True)
+
+
+def image_job(*, text: str = "", media_overrides: dict | None = None, **payload_overrides) -> MessageJob:
+    """A message carrying an image attachment (inline base64 by default, no
+    filename) — the shape `_image_attachment()` must recognise even without
+    the generic `_attachment_names()` filename fields."""
+    media = {"mimetype": "image/jpeg", "data": base64.b64encode(b"fake-jpeg-bytes").decode()}
+    if media_overrides:
+        media.update(media_overrides)
+    return job(text=text, media=media, **payload_overrides)
 
 
 async def test_text_hoax_runs_rag_then_generates_and_dispatches(rig):
@@ -594,3 +638,170 @@ async def test_apk_attachment_is_warned_without_static_analysis(rig):
     assert result["engine"] == "apk_warning"
     assert result["risk"] == "HIGH"
     assert state["rows"][0].input_type.value == "FILE_APK"
+
+
+# --- OCR: image input becomes text, the rest of the pipeline never knows ----
+
+
+async def test_ocr_disabled_by_default_image_attachment_is_never_sent_for_ocr(rig):
+    """`OCR_ENABLED=false` (the default) must behave exactly like the
+    pre-OCR codebase: an image is just an attachment nothing reads.
+
+    `ocr_enabled` explicit here, not inherited from `SETTINGS` — `Settings()`
+    reads the developer's real root `.env`, and a machine with
+    `OCR_ENABLED=true` set for live testing must not flip this test."""
+    ml = FakeMlClient()
+    state = rig(ml=ml)
+    settings_ocr_off = Settings(user_hash_salt="test-salt", end_to_end_target_ms=3000, ocr_enabled=False)
+
+    result = await orchestrator.process_message_job(
+        image_job(media_overrides={"filename": "photo.jpg"}), {}, settings_ocr_off
+    )
+
+    assert state["ml"].ocr_calls == []
+    assert result["ocr_used"] is False
+    assert state["rows"][0].input_type.value == "TEXT"
+
+
+async def test_image_only_message_without_caption_or_filename_is_not_dropped(rig):
+    """No caption, no `filename` field (only inline `media.data`) — the
+    pre-OCR empty-body guard would have discarded this as
+    `ignored_empty_body`; OCR is the only thing giving it content."""
+    ml = FakeMlClient(matches=[KB_MATCH], message="pesan balasan", ocr_result={
+        "text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None,
+    })
+    state = rig(ml=ml)
+
+    result = await orchestrator.process_message_job(image_job(), {}, SETTINGS_OCR)
+
+    assert result["status"] == "processed"
+    assert result["intent"] == "HEALTH_HOAX"
+    assert result["engine"] == "text_verification"
+    assert result["risk"] == "HIGH"
+    assert result["ocr_used"] is True
+    assert result["ocr_confidence"] == 0.9
+    assert state["ml"].ocr_calls == [{"filename": "image", "mimetype": "image/jpeg", "size": len(b"fake-jpeg-bytes")}]
+    assert state["rows"][0].input_type.value == "IMAGE_OCR"
+
+
+async def test_ocr_extracted_text_reaches_the_exact_same_verdict_as_typed_text(rig):
+    """Regression proof for [[OCR Image Detection]] §14: the same claim,
+    typed vs delivered as a screenshot, must produce the same outcome. The
+    only fields allowed to differ are the OCR diagnostics themselves."""
+    rig(ml=FakeMlClient(matches=[KB_MATCH], message="pesan balasan"))
+    text_result = await orchestrator.process_message_job(job(), {}, SETTINGS)
+
+    rig(ml=FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    ))
+    image_result = await orchestrator.process_message_job(image_job(), {}, SETTINGS_OCR)
+
+    diagnostic_only = {"ocr_used", "ocr_confidence"}
+    assert {k: v for k, v in text_result.items() if k not in diagnostic_only} == {
+        k: v for k, v in image_result.items() if k not in diagnostic_only
+    }
+    assert text_result["ocr_used"] is False
+    assert image_result["ocr_used"] is True
+
+
+async def test_ocr_empty_result_never_fabricates_a_claim(rig):
+    """No usable text in the image: risk stays UNKNOWN, never HOAX
+    (12_Empty_Poor_OCR_Handling)."""
+    ml = FakeMlClient(ocr_result={"text": "", "success": False, "language": None, "error": "no_text_detected"})
+    state = rig(ml=ml)
+
+    result = await orchestrator.process_message_job(image_job(), {}, SETTINGS_OCR)
+
+    assert result["risk"] == "UNKNOWN"
+    assert "ocr_empty_result" in result["degradations"]
+    assert result["ocr_used"] is False
+    assert ml.rag_calls == []  # nothing to extract a claim from, RAG never ran
+    assert state["rows"][0].input_type.value == "TEXT"
+
+
+async def test_ocr_low_confidence_still_feeds_the_pipeline_but_is_flagged(rig):
+    """13_Low_Confidence_OCR: a shaky reading is still real evidence — it must
+    not be silently discarded, but it must be visible in the audit trail."""
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+        ocr_confidence=0.2,  # below OCR_MIN_CONFIDENCE (0.50 default)
+    )
+    rig(ml=ml)
+
+    result = await orchestrator.process_message_job(image_job(), {}, SETTINGS_OCR)
+
+    assert "ocr_low_confidence" in result["degradations"]
+    assert result["ocr_used"] is True
+    assert result["match_count"] == 1  # the text still ran through RAG
+
+
+async def test_ocr_service_failure_degrades_and_falls_back_to_the_caption(rig):
+    """ml-service unreachable/timed out for OCR: the message must not be
+    dropped, and any caption text still gets analysed as plain text."""
+    ml = FakeMlClient(ocr_error=MlServiceError("ocr_timeout", "OCR exceeded the configured timeout", retryable=False))
+    state = rig(ml=ml)
+
+    result = await orchestrator.process_message_job(
+        image_job(text="cek ini dong", media_overrides={"filename": "photo.jpg"}), {}, SETTINGS_OCR
+    )
+
+    assert any(item.startswith("ocr_unavailable:ocr_timeout") for item in result["degradations"])
+    assert result["ocr_used"] is False
+    assert ml.generate_calls[0]["user_text"] == "cek ini dong"
+    assert state["rows"][0].input_type.value == "TEXT"
+
+
+async def test_oversized_image_skips_the_ocr_call_entirely(rig):
+    """Cheap, dependency-free rejection at the gateway: no reason to upload
+    an obviously oversized file to ml-service first."""
+    ml = FakeMlClient()
+    rig(ml=ml)
+    tiny_limit = Settings(user_hash_salt="test-salt", end_to_end_target_ms=3000, ocr_enabled=True, ocr_max_image_size_mb=0.000001)
+
+    result = await orchestrator.process_message_job(image_job(media_overrides={"filename": "photo.jpg"}), {}, tiny_limit)
+
+    assert ml.ocr_calls == []
+    assert "ocr_image_too_large" in result["degradations"]
+
+
+async def test_image_with_media_url_is_downloaded_then_ocrd(rig):
+    """WAHA's other media shape: a URL to fetch rather than inline base64
+    bytes — must go through `WahaClient.download_media`, authenticated the
+    same way as every other WAHA call."""
+    waha = FakeWaha(media_bytes=b"downloaded-jpeg-bytes")
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    )
+    rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        image_job(media_overrides={"filename": "photo.jpg", "url": "https://waha.internal/media/abc", "data": None}),
+        {},
+        SETTINGS_OCR,
+    )
+
+    assert waha.download_media_calls == ["https://waha.internal/media/abc"]
+    assert result["ocr_used"] is True
+    assert ml.ocr_calls[0]["size"] == len(b"downloaded-jpeg-bytes")
+
+
+async def test_media_download_failure_degrades_without_crashing(rig):
+    waha = FakeWaha(media_bytes=None)  # download fails
+    ml = FakeMlClient()
+    state = rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        image_job(media_overrides={"filename": "photo.jpg", "url": "https://waha.internal/media/missing", "data": None}),
+        {},
+        SETTINGS_OCR,
+    )
+
+    assert ml.ocr_calls == []
+    assert "ocr_media_unavailable" in result["degradations"]
+    assert result["ocr_used"] is False
+    assert state["rows"][0].input_type.value == "TEXT"

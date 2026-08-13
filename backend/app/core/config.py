@@ -156,7 +156,33 @@ class Settings(BaseSettings):
     # the actual indonesia_hoax_news corpus even with bounded TF-IDF vocab.
     ml_timeout_train_seconds: float = 300.0
     ml_timeout_evaluate_seconds: float = 120.0
+    # A few seconds above ml-service's own `OCR_TIMEOUT_SECONDS` (default 15s),
+    # same reasoning as `ml_timeout_extract_claim_seconds`: the server-side
+    # bound should win the race and return a controlled `ocr_timeout` result
+    # before the client gives up and reports transport failure instead.
+    ml_timeout_ocr_seconds: float = 20.0
     ml_enabled: bool = True
+
+    # OCR (image-input preprocessing layer, [[OCR Image Detection]]). This is a
+    # new INPUT MODALITY only — it never touches the locked production
+    # classifier or its dataset. False means an image attachment is skipped
+    # exactly like an unrecognised file type; the message still gets a reply
+    # if it carries any caption text. Roll out with this off, verify the
+    # ml-service Tesseract build on the target VPS, then flip it on.
+    ocr_enabled: bool = False
+    ocr_max_image_size_mb: float = 10.0
+    ocr_max_width: int = 4096
+    ocr_max_height: int = 4096
+    ocr_timeout_seconds: float = 15.0
+    # Below this, OCR text still reaches the pipeline (it is real evidence,
+    # just weaker) but is flagged in `degradations` rather than trusted
+    # silently — see 13_Low_Confidence_OCR.
+    ocr_min_confidence: float = 0.50
+    ocr_max_text_length: int = 10000
+    # Development-only: logs the raw OCR text. OCR output is message content —
+    # the same privacy class `log_message_content` already governs — so this
+    # must never be true in production regardless of that flag.
+    ocr_debug_log: bool = False
 
     # RAG retrieval contract, fixed by 03_Database/02_VectorDB_Specifications.md.
     rag_top_k: int = 3

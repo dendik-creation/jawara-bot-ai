@@ -123,3 +123,44 @@ async def test_session_list_is_normalised_for_the_control_panel(monkeypatch):
 async def test_session_list_failure_is_an_empty_list_not_an_exception(monkeypatch):
     patch_httpx(monkeypatch, "app.clients.waha_client", raise_timeout)
     assert await WahaClient(waha_settings()).list_sessions() == []
+
+
+async def test_download_media_returns_the_raw_bytes(monkeypatch):
+    calls = patch_httpx(
+        monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(200, content=b"\xff\xd8\xff...jpeg")
+    )
+    result = await WahaClient(waha_settings()).download_media("http://waha:3000/api/files/abc.jpg")
+
+    assert calls[0]["url"] == "http://waha:3000/api/files/abc.jpg"
+    assert calls[0]["headers"]["X-Api-Key"] == "waha-key"
+    assert result == b"\xff\xd8\xff...jpeg"
+
+
+async def test_download_media_failure_is_none_not_an_exception(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", raise_timeout)
+    assert await WahaClient(waha_settings()).download_media("http://waha:3000/api/files/gone.jpg") is None
+
+
+async def test_download_media_4xx_is_none(monkeypatch):
+    patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(404))
+    assert await WahaClient(waha_settings()).download_media("http://waha:3000/api/files/missing.jpg") is None
+
+
+async def test_download_media_rewrites_a_host_waha_reported_that_is_unreachable_from_here(monkeypatch):
+    """WAHA embeds its own webhook payload URLs using its own view of its
+    host — often `localhost`, which resolves to the worker container itself,
+    not WAHA. The path WAHA reported is real; the host it put in front of it
+    is not, so it is swapped for `waha_api_url`, the one address every other
+    call in this client already proves reachable."""
+    calls = patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(200, content=b"jpeg-bytes"))
+    result = await WahaClient(waha_settings()).download_media("http://localhost:3000/api/files/abc.jpg?token=x")
+
+    assert calls[0]["url"] == "http://waha:3000/api/files/abc.jpg?token=x"
+    assert result == b"jpeg-bytes"
+
+
+async def test_download_media_accepts_a_bare_path(monkeypatch):
+    calls = patch_httpx(monkeypatch, "app.clients.waha_client", lambda **_: FakeResponse(200, content=b"bytes"))
+    await WahaClient(waha_settings()).download_media("/api/files/abc.jpg")
+
+    assert calls[0]["url"] == "http://waha:3000/api/files/abc.jpg"

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
@@ -22,6 +23,23 @@ async def receive_webhook(event: WahaWebhookEvent, response: Response) -> dict[s
     payload = event.payload or {}
     waha_message_id = payload.get("id")
     chat_id = payload.get("from")
+
+    # A WAHA session that had to re-authenticate resyncs WhatsApp chat history
+    # and replays old messages through this webhook as if they were new —
+    # dedup's TTL (app/core/dedup.py) does not cover messages this old, so
+    # without this guard they would be re-enqueued and re-answered. WhatsApp
+    # timestamps are Unix seconds.
+    event_timestamp = payload.get("timestamp")
+    if isinstance(event_timestamp, (int, float)) and event_timestamp > 0:
+        age = time.time() - event_timestamp
+        if age > settings.webhook_max_age_seconds:
+            logger.info(
+                "stale webhook event, skipped",
+                extra={"waha_message_id": waha_message_id, "event": event.event, "age_seconds": age},
+            )
+            response.headers["X-Queued"] = "0"
+            return {"status": "stale"}
+
     # Rate limit the *sender*, not the chat. In a group `from` is the group, so
     # scoping by it would let one noisy member spend the whole room's budget.
     scope = f"{event.session}:{group_policy.sender_of(payload, chat_id) or chat_id or 'unknown'}"

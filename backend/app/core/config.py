@@ -107,6 +107,15 @@ class Settings(BaseSettings):
     rate_limit_max_requests: int = 20
     rate_limit_window_seconds: int = 60
 
+    # A WAHA session that had to re-authenticate (session file not flushed
+    # cleanly before restart) resyncs WhatsApp chat history and replays old
+    # messages through the webhook as if they were new — dedup's 600s TTL
+    # (app/core/dedup.py) does not cover messages that old. Dropping any
+    # event whose own timestamp is older than this stops the pipeline from
+    # re-running (and re-replying) on chats already handled long ago. 120s
+    # covers real network/queue lag without gating a genuinely fresh message.
+    webhook_max_age_seconds: int = 120
+
     # SHA-256(user_hash_salt + identifier) — see app/core/hashing.py.
     user_hash_salt: str = "changeme"
 

@@ -4,6 +4,11 @@ services:
     image: devlikeapro/waha:latest
     container_name: jawara-waha
     restart: unless-stopped
+    # Default 10s SIGKILL grace period cuts WAHA off before it flushes the
+    # session file to `waha_sessions`, corrupting it — the next start then
+    # re-authenticates instead of resuming, which triggers a WhatsApp chat
+    # history resync and replays already-handled messages through the webhook.
+    stop_grace_period: 30s
     ports:
       # 127.0.0.1, not 0.0.0.0: the dashboard (for QR-login setup) is a human
       # admin tool, not a public endpoint — reach it over SSH port-forwarding,

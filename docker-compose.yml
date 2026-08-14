@@ -3,7 +3,7 @@ services:
   waha:
     image: devlikeapro/waha:latest
     container_name: jawara-waha
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1, not 0.0.0.0: the dashboard (for QR-login setup) is a human
       # admin tool, not a public endpoint — reach it over SSH port-forwarding,
@@ -33,7 +33,7 @@ services:
   api-gateway:
     build: ./backend
     container_name: jawara-gateway
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: public traffic comes in through `reverse-proxy` on the
       # jawara-net Docker network, not this published port — that one stays
@@ -95,7 +95,7 @@ services:
   celery-worker:
     build: ./backend
     container_name: jawara-worker
-    restart: always
+    restart: unless-stopped
     # -Q jawara.messages,jawara.training,jawara.evaluation,jawara.ingestion: one
     # worker consumes all four queues — Training Jobs (05_Training_Jobs §6),
     # Model Evaluation (06_Model_Evaluation.md) and fact-check ingestion
@@ -173,7 +173,7 @@ services:
   celery-beat:
     build: ./backend
     container_name: jawara-beat
-    restart: always
+    restart: unless-stopped
     # Scheduler only — it enqueues, it never executes. Exactly one replica may
     # run: a second Beat would double every tick, and the fact-check crawl
     # would poll the source twice as often as the source was told to expect.
@@ -202,7 +202,7 @@ services:
   ml-service:
     build: ./ml-service
     container_name: jawara-ml
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: internal service-to-service traffic goes over jawara-net;
       # this is host-side debugging access only, never public.
@@ -274,7 +274,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: jawara-postgres
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: never publish a database port to the open internet. Kept
       # published (not dropped) for the hybrid-local-dev workflow in
@@ -298,7 +298,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.8.0
     container_name: jawara-qdrant
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: Qdrant has no auth of its own in this stack — never public.
       - "127.0.0.1:${QDRANT_PORT}:6333"
@@ -319,7 +319,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: jawara-redis
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: Redis in this stack has no password (no auth mechanism
       # exists in the codebase at all) — an internet-facing 6379 is an open
@@ -343,7 +343,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     container_name: jawara-dashboard
-    restart: always
+    restart: unless-stopped
     ports:
       # 127.0.0.1: public traffic comes in through `reverse-proxy`.
       - "127.0.0.1:${FRONTEND_PORT}:3000"

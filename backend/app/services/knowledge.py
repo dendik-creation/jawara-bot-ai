@@ -22,12 +22,14 @@ concern, out of scope here.
 """
 
 import logging
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any, Literal, Sequence
 
 import asyncpg
 
 from app.clients.ml_client import MlClient, MlServiceError
 from app.core.config import Settings, get_settings
+from app.pipeline.url_extractor import normalize_domain
 
 logger = logging.getLogger("app.services.knowledge")
 
@@ -373,7 +375,7 @@ async def sync_fact_items(
         await conn.close()
 
 
-SOURCE_COLUMNS = "id, name, base_url, slug, is_trusted, reliability_score, created_at"
+SOURCE_COLUMNS = "id, name, base_url, slug, is_trusted, reliability_score, normalized_domain, created_at"
 
 
 def _row_to_source(row: asyncpg.Record) -> dict[str, Any]:
@@ -384,6 +386,7 @@ def _row_to_source(row: asyncpg.Record) -> dict[str, Any]:
         "slug": row["slug"],
         "is_trusted": row["is_trusted"],
         "reliability_score": float(row["reliability_score"]),
+        "normalized_domain": row["normalized_domain"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
     }
 
@@ -421,20 +424,27 @@ async def create_fact_source(
     reliability_score: float | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
+    """Raises `ValueError` if `base_url`'s domain is already registered by another source."""
     settings = settings or get_settings()
+    domain = normalize_domain(base_url)
+
     conn = await _connect(settings)
     try:
-        row = await conn.fetchrow(
-            f"""
-            INSERT INTO fact_sources (name, base_url, is_trusted, reliability_score)
-            VALUES ($1, $2, $3, coalesce($4::numeric, 0.80))
-            RETURNING {SOURCE_COLUMNS}
-            """,
-            name,
-            base_url,
-            is_trusted,
-            reliability_score,
-        )
+        try:
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO fact_sources (name, base_url, is_trusted, reliability_score, normalized_domain)
+                VALUES ($1, $2, $3, coalesce($4::numeric, 0.80), $5)
+                RETURNING {SOURCE_COLUMNS}
+                """,
+                name,
+                base_url,
+                is_trusted,
+                reliability_score,
+                domain,
+            )
+        except asyncpg.UniqueViolationError:
+            raise ValueError(f"domain {domain} sudah terdaftar pada sumber lain") from None
     finally:
         await conn.close()
     return _row_to_source(row)
@@ -574,3 +584,80 @@ async def import_fact_items_csv(
         await conn.close()
 
     return {"total": len(rows), "created": created, "failed": len(errors), "errors": errors}
+
+
+# ==========================================================
+# Trusted official-domain recognition for URL safety (`!link` false-positive
+# fix). `fact_sources` stays the single Knowledge Base source model — there
+# is no separate TrustedDomain/OfficialDomain table. A source only
+# participates here when both `is_trusted` and `normalized_domain` are set;
+# a source an operator marked untrusted, or one created outside the CRUD
+# path with no domain recorded, contributes nothing.
+# ==========================================================
+
+
+@dataclass(frozen=True)
+class TrustedSource:
+    """One Knowledge Base source recognised as an official domain."""
+
+    id: int
+    name: str
+    normalized_domain: str
+
+
+def _domain_matches(url_domain: str, trusted_domain: str) -> bool:
+    """`url_domain` is `trusted_domain` itself, or a subdomain of it.
+
+    Exact-or-subdomain-suffix matching, never a substring check —
+    `pln-co-id.example.com` must not match `pln.co.id` just because the text
+    appears in it (lookalike domains stay untrusted).
+    """
+    return url_domain == trusted_domain or url_domain.endswith(f".{trusted_domain}")
+
+
+async def lookup_trusted_sources(
+    domains: Sequence[str], settings: Settings | None = None
+) -> dict[str, TrustedSource]:
+    """`registrable/host domain -> TrustedSource` for every domain that matches a trusted KB source.
+
+    Never raises: a database that is slow, down, or simply not configured for
+    this test/dev environment means "no trust signal available", the same
+    degradation every other stage of the pipeline is allowed
+    (`app.pipeline.orchestrator`'s own docstring). The URL-safety engine is
+    the caller, and it must be able to answer UNKNOWN rather than crash when
+    this lookup cannot run.
+    """
+    settings = settings or get_settings()
+    unique = sorted({domain for domain in domains if domain})
+    if not unique:
+        return {}
+
+    try:
+        # Same timeout as `_connect()` elsewhere in this module — a tighter
+        # one here bought nothing but flaky false "unavailable" results on a
+        # DB that is merely slow to accept a new connection, not actually down.
+        conn = await asyncpg.connect(settings.database_url, timeout=5)
+    except Exception:  # noqa: BLE001 — unreachable DB degrades, never raises
+        logger.info("trusted source lookup unavailable, database unreachable", extra={"domains": unique})
+        return {}
+
+    try:
+        rows = await conn.fetch(
+            "SELECT id, name, normalized_domain FROM fact_sources "
+            "WHERE is_trusted = TRUE AND normalized_domain IS NOT NULL"
+        )
+    except Exception:  # noqa: BLE001 — same degradation for a query-time failure
+        logger.warning("trusted source lookup query failed", exc_info=True, extra={"domains": unique})
+        return {}
+    finally:
+        await conn.close()
+
+    trusted = [TrustedSource(id=row["id"], name=row["name"], normalized_domain=row["normalized_domain"]) for row in rows]
+
+    matched: dict[str, TrustedSource] = {}
+    for domain in unique:
+        for source in trusted:
+            if _domain_matches(domain, source.normalized_domain):
+                matched[domain] = source
+                break
+    return matched

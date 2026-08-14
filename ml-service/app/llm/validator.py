@@ -21,6 +21,30 @@ STATUS_SAFE = "🟢 *FAKTA RESMI / AMAN*"
 
 STATUS_MARKERS = (STATUS_HIGH, STATUS_MEDIUM, STATUS_SAFE)
 
+# URL-safety vocabulary — deliberately distinct wording from the fact/hoax
+# markers above (`!link` false-positive fix, task Part 2). A phishing scan
+# and a factual claim answer different questions: "is this destination
+# dangerous" is not "is this claim true", so a legitimate-but-unverified URL
+# must never render as "HOAX", and an unresolved fact claim must never render
+# as "BERBAHAYA". `URL_STATUS_UNKNOWN` is its own marker, not a reuse of
+# `URL_STATUS_MEDIUM` — "we have no evidence either way" and "we found
+# something to be cautious about" are different claims to make to a user.
+URL_STATUS_LOW = "🟢 *AMAN*"
+URL_STATUS_MEDIUM = "🟡 *PERLU WASPADA*"
+URL_STATUS_HIGH = "🔴 *BERBAHAYA*"
+URL_STATUS_UNKNOWN = "⚪ *BELUM TERVERIFIKASI*"
+
+URL_STATUS_MARKERS = (URL_STATUS_LOW, URL_STATUS_MEDIUM, URL_STATUS_HIGH, URL_STATUS_UNKNOWN)
+
+# Every marker the parser accepts as *a* status line, across both
+# vocabularies — which one is *correct* for a given (risk, category) pair is
+# `status_for_risk`'s job, checked separately by `status_mismatch` below.
+ALL_STATUS_MARKERS = STATUS_MARKERS + URL_STATUS_MARKERS
+
+# Categories that answer "is this destination dangerous" rather than "is this
+# claim true" — the only ones that get the URL vocabulary above.
+URL_SAFETY_CATEGORIES = frozenset({"PHISHING_LINK"})
+
 MAX_EXPLANATION_SENTENCES = 4
 
 _URL = re.compile(r"https?://\S+")
@@ -53,8 +77,19 @@ class ValidatedResponse:
         }
 
 
-def validate_response(text: str) -> ValidatedResponse:
-    """Parse and check one generated reply. Never raises."""
+def validate_response(text: str, *, expected_status: str | None = None) -> ValidatedResponse:
+    """Parse and check one generated reply. Never raises.
+
+    `expected_status` is the deterministic verdict — `status_for_risk(risk,
+    category=...)` — computed by the caller from the URL-safety engine or the
+    knowledge-base risk assessment. When given, the LLM's own status line
+    must match it exactly: a mismatch is a `status_mismatch` *violation*, not
+    a warning, which is what makes it non-negotiable. `generate()`
+    (`app/api/v1/endpoints/inference.py`) already treats any violation as
+    "discard this reply, use the deterministic composer instead" — reusing
+    that path is the entire enforcement mechanism (task Part 1.2): there is
+    no separate "reject" branch to forget to wire up.
+    """
     violations: list[str] = []
     warnings: list[str] = []
 
@@ -71,13 +106,20 @@ def validate_response(text: str) -> ValidatedResponse:
         if not line.strip():
             continue
         candidate = line.strip()
-        if candidate in STATUS_MARKERS:
+        if candidate in ALL_STATUS_MARKERS:
             status = candidate
             body_start = index + 1
         else:
             violations.append("missing_status_indicator")
             body_start = index
         break
+
+    if expected_status is not None and status and status != expected_status:
+        # The model chose a real, well-formed status marker — just not the
+        # one the deterministic risk assessment computed. This is exactly the
+        # failure this fix targets: risk_level=UNKNOWN, LLM says HIGH (or the
+        # reverse). Structurally valid is not good enough to dispatch.
+        violations.append("status_mismatch")
 
     # --- Part 4: forwardable block (final paragraph) ---------------------
     # The last blank-line-separated paragraph is the candidate. Taking the
@@ -143,13 +185,34 @@ def validate_response(text: str) -> ValidatedResponse:
     )
 
 
-def status_for_risk(risk_level: str) -> str:
-    """Map `risk_level_enum` onto the documented status indicator.
+def status_for_risk(risk_level: str, *, category: str | None = None) -> str:
+    """The one authoritative mapping from computed `risk_level` to status marker.
 
-    UNKNOWN maps to the amber "belum terverifikasi" marker, never to green:
-    "we could not verify this" must never be shown to a user as "this is safe".
+    This is the deterministic source of truth the task requires: the LLM may
+    explain a result, never choose it. Two vocabularies, picked by
+    `category` — URL safety (`PHISHING_LINK`) and everything else
+    (fact/hoax verification, `!cek`). They must stay semantically distinct
+    (task Part 2): UNKNOWN is never HIGH, and for a URL, UNKNOWN is never
+    rendered as HOAX-vocabulary at all.
+
+    Fact/hoax UNKNOWN still folds into the amber "belum terverifikasi"
+    marker (unchanged, pre-existing behaviour) — "we could not verify this"
+    must never be shown to a user as "this is safe". URL safety gets its own
+    dedicated ⚪ UNKNOWN marker instead of reusing MEDIUM's, because "no
+    evidence either way" and "found something to be cautious about" are
+    different claims about a link.
     """
     normalised = (risk_level or "").upper()
+
+    if (category or "").upper() in URL_SAFETY_CATEGORIES:
+        if normalised == "HIGH":
+            return URL_STATUS_HIGH
+        if normalised == "LOW":
+            return URL_STATUS_LOW
+        if normalised == "MEDIUM":
+            return URL_STATUS_MEDIUM
+        return URL_STATUS_UNKNOWN
+
     if normalised == "HIGH":
         return STATUS_HIGH
     if normalised == "LOW":

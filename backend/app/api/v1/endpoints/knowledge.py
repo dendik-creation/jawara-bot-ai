@@ -322,9 +322,12 @@ async def list_fact_sources() -> dict[str, object]:
 async def create_fact_source(
     payload: FactSourceCreateRequest, request: Request, operator: Operator = Depends(require_operator)
 ) -> dict[str, object]:
-    result = await knowledge.create_fact_source(
-        payload.name, payload.base_url, payload.is_trusted, payload.reliability_score
-    )
+    try:
+        result = await knowledge.create_fact_source(
+            payload.name, payload.base_url, payload.is_trusted, payload.reliability_score
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
 
     await record_audit(
         actor_operator_id=operator.id,

@@ -231,7 +231,7 @@ def rig(monkeypatch):
 
         monkeypatch.setattr(orchestrator, "_cached_production_model", fake_production_model)
 
-        async def fake_scan(urls, redis=None, settings=None):
+        async def fake_scan(urls, redis=None, settings=None, trusted_lookup=None, request_id=None):
             return url_scan or UrlScanResult(risk=RiskLevel.UNKNOWN)
 
         monkeypatch.setattr(orchestrator, "scan_urls", fake_scan)
@@ -321,7 +321,12 @@ async def test_ml_service_down_degrades_to_rules_only_and_still_logs(rig):
 
     assert any(item.startswith("ml_unavailable") for item in result["degradations"])
     assert any(item.startswith("generation_unavailable") for item in result["degradations"])
-    assert result["response_dispatched"] is False
+    # `/v1/generate` never answering must not leave the command silent (the
+    # same "always SUCCESS or USER_SAFE_FAILURE, never nothing" guarantee
+    # 4d2cc1d enforces at the task-retry level, here for the one stage that
+    # degrades without the task itself raising).
+    assert result["response_dispatched"] is True
+    assert state["waha"].sent[0][1] == orchestrator.GENERATION_UNAVAILABLE_REPLY
     assert result["logged"] is True  # the audit trail survives the outage
     assert state["rows"][0].risk_score is RiskLevel.MEDIUM
 
@@ -645,6 +650,34 @@ async def test_ml_classify_folds_into_risk_once_a_model_is_promoted(rig):
     # FINANCIAL_FRAUD -> HIGH in CATEGORY_RISK, which now wins over the
     # rules-engine's own MEDIUM (no knowledge-base match) via worst_risk.
     assert result["risk"] == "HIGH"
+
+
+async def test_ml_classify_phishing_link_never_overrides_the_url_safety_verdict(rig):
+    """A classifier mis-reading a bare `!link` URL body as PHISHING_LINK must
+    not force risk to HIGH — the URL-safety engine's own verdict (Safe
+    Browsing + VirusTotal + KB trust) is the authoritative signal for links,
+    same as the LLM cannot override it in the reply-generation stage."""
+    scan = UrlScanResult(
+        risk=RiskLevel.LOW,
+        urls=(
+            UrlRisk(
+                url="https://www.detik.com/pop/trending/d-8612709/example",
+                domain="detik.com",
+                is_shortlink=False,
+                risk=RiskLevel.LOW,
+                reason="no_provider_flagged",
+            ),
+        ),
+    )
+    ml = FakeMlClient(classify_result=("PHISHING_LINK", 0.8))
+    state = rig(ml=ml, waha=FakeWaha(bot_ids=BOT_IDS), url_scan=scan, production_model=PRODUCTION_MODEL)
+
+    result = await orchestrator.process_message_job(
+        mentioning("!link https://www.detik.com/pop/trending/d-8612709/example"), {}, SETTINGS
+    )
+
+    assert result["ml_category"] == "PHISHING_LINK"
+    assert result["risk"] == "LOW"
 
 
 async def test_ml_classify_not_a_threat_does_not_suppress_a_rules_engine_high(rig):
@@ -1058,6 +1091,42 @@ async def test_reply_to_image_is_ocrd_using_the_replied_message_not_the_current_
     checked = ml.generate_calls[0]["user_text"]
     assert HOAX_TEXT in checked
     assert "apakah informasi di gambar itu benar?" in checked
+    assert waha.download_media_calls == ["http://waha:3000/api/files/abc.jpg"]
+
+
+async def test_reply_to_image_with_inline_reply_to_never_calls_waha_get_message(rig):
+    """Production incident: on this WAHA build `replyTo` already carries the
+    full quoted message inline (`body`, `media.url`), and
+    `GET .../messages/{id}` 500s unconditionally regardless of id shape —
+    every `!cek` on a reply-to-image usage-errored until the inline path
+    existed. With the content already inline, WAHA must never be asked to
+    fetch the message at all."""
+    ml = FakeMlClient(
+        matches=[KB_MATCH],
+        message="pesan balasan",
+        ocr_result={"text": HOAX_TEXT, "success": True, "language": "ind+eng", "error": None},
+    )
+    waha = FakeWaha(bot_ids=BOT_IDS, media_bytes=b"fake-jpeg-bytes")
+    state = rig(ml=ml, waha=waha)
+
+    result = await orchestrator.process_message_job(
+        mentioning(
+            "!cek",
+            replyTo={
+                "id": "3EB0DAF7516034EE5BE090",
+                "participant": "99669027872892@lid",
+                "body": "apakah ini nyata",
+                "hasMedia": True,
+                "media": {"mimetype": "image/jpeg", "url": "http://waha:3000/api/files/abc.jpg"},
+            },
+        ),
+        {},
+        SETTINGS_OCR,
+    )
+
+    assert result["status"] == "processed"
+    assert result["ocr_used"] is True
+    assert waha.get_message_calls == []
     assert waha.download_media_calls == ["http://waha:3000/api/files/abc.jpg"]
 
 

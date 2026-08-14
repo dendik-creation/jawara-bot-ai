@@ -131,6 +131,22 @@ LINK_USAGE_REPLY = (
     "@JAWARA !link https://example.com"
 )
 
+# ml-service's `/v1/generate` is a single, unretried call from here — its own
+# service already falls back internally (template composer) when its *own*
+# provider fails, so an `MlServiceError` reaching this pipeline means the
+# request never got a response at all (timeout, connection refused, 5xx).
+# Leaving `reply_text` empty in that case would end the pipeline with
+# `status: processed` but nothing ever sent to WAHA — a silent failure the
+# task-level retry net in `app.worker.tasks` cannot catch, because no
+# exception propagates past the `except MlServiceError` below. This is the
+# same "every explicit command ends in a response, never nothing" guarantee
+# 4d2cc1d added at the task level, applied at the one stage that can hit this
+# without the task itself raising.
+GENERATION_UNAVAILABLE_REPLY = (
+    "Maaf, JAWARA sedang mengalami kendala saat menyusun jawaban.\n\n"
+    "Silakan coba lagi beberapa saat lagi."
+)
+
 
 async def _status_reply(settings: Settings) -> str:
     """`!status` (JAWARA Strict WhatsApp Command System §7).
@@ -166,11 +182,20 @@ VERDICT_RISK: dict[str, RiskLevel] = {
 # suppress a HIGH the rules engine already found. `NOT_A_THREAT` (a real
 # negative class the DB-locked `Category` enum can't represent — see
 # `app.services.datasets`) contributes no elevated risk.
+#
+# `PHISHING_LINK` is deliberately absent: unlike the other categories, a link's
+# risk already has its own deterministic, evidence-based verdict from
+# `scan_urls` (Safe Browsing + VirusTotal + Knowledge Base trust). A blanket
+# "every message the classifier calls PHISHING_LINK is HIGH" signal here would
+# outrank that verdict via `worst_risk()` and force a legitimate URL (e.g. a
+# news article link the classifier mis-reads from a bare-URL `!link` body) to
+# HIGH regardless of what the URL engine actually found — the same
+# LLM-cannot-override-deterministic-risk bug this pipeline was fixed against,
+# just from the classifier stage instead of the reply-generation stage.
 CATEGORY_RISK: dict[str, RiskLevel] = {
     Category.HEALTH_HOAX.value: RiskLevel.MEDIUM,
     Category.FINANCIAL_FRAUD.value: RiskLevel.HIGH,
     Category.GENERAL_NEWS.value: RiskLevel.LOW,
-    Category.PHISHING_LINK.value: RiskLevel.HIGH,
     Category.FILE_APK.value: RiskLevel.HIGH,
     "NOT_A_THREAT": RiskLevel.LOW,
 }
@@ -295,7 +320,7 @@ async def process_message_job(
 
     body = payload.get("body") or payload.get("caption") or ""
     attachments = attachment_names(payload)
-    quoted_id = group_policy.quoted_message_id(payload)
+    quoted_id = group_policy.quoted_message_id(payload, chat_id)
     image_attachment = image_attachment_of(payload)
     if not body.strip() and not attachments and not quoted_id and not image_attachment:
         outcome.status = "ignored_empty_body"
@@ -353,6 +378,22 @@ async def process_message_job(
                 **log_context,
                 "has_reply": bool(decision.quoted_message_id),
                 "has_media": bool(image_attachment),
+                # Diagnostic only, no message content: which top-level and
+                # `_data` keys this webhook actually carried. WAHA's payload
+                # shape drifts across engines/versions and `quoted_message_id`
+                # reads a fixed set of spellings (`replyTo`, `quotedStanzaID`,
+                # `quotedMsgId`) — when a real WhatsApp reply still resolves
+                # `has_reply: false`, this is what tells us which new spelling
+                # to add, instead of guessing blind.
+                "payload_keys": sorted(payload.keys()),
+                "data_keys": group_policy.data_keys_of(payload),
+                # `replyTo`/`quotedStanzaID` carry only ids, jids and a
+                # boolean — never message content — so logging them verbatim
+                # is safe and is what pins down WAHA's actual reply-quote
+                # shape when `quoted_message_id()`'s composite-id
+                # reconstruction still needs adjusting for this WAHA build.
+                "reply_to_raw": payload.get("replyTo"),
+                "resolved_quoted_id": decision.quoted_message_id,
             },
         )
 
@@ -406,8 +447,14 @@ async def process_message_job(
     # complete request, not an empty one.
     quoted_image: ImageAttachment | None = None
     if decision.quoted_message_id:
+        reply_to_inline = payload.get("replyTo")
         resolved_quote = await input_resolver.resolve_quoted_message(
-            WahaClient(settings), message.session, chat_id, decision.quoted_message_id, log_context
+            WahaClient(settings),
+            message.session,
+            chat_id,
+            decision.quoted_message_id,
+            log_context,
+            inline=reply_to_inline if isinstance(reply_to_inline, dict) else None,
         )
         outcome.degradations.extend(resolved_quote.degraded)
         if resolved_quote.text:
@@ -552,7 +599,7 @@ async def process_message_job(
 
         # --- stage 5b/6: verification ------------------------------------
         if intent.engine == intent_router.ENGINE_URL_SAFETY and urls:
-            url_scan = await scan_urls(urls, redis=redis, settings=settings)
+            url_scan = await scan_urls(urls, redis=redis, settings=settings, request_id=request_id)
             risk_signals.append(url_scan.risk)
             if url_scan.degraded:
                 outcome.degradations.append("url_intel_unavailable")
@@ -611,7 +658,7 @@ async def process_message_job(
 
         # A dangerous link inside an otherwise text-shaped message still counts.
         if url_scan is None and urls and intent.engine != intent_router.ENGINE_URL_SAFETY:
-            url_scan = await scan_urls(urls, redis=redis, settings=settings)
+            url_scan = await scan_urls(urls, redis=redis, settings=settings, request_id=request_id)
             risk_signals.append(url_scan.risk)
 
         # --- stage 7: risk assessment ------------------------------------
@@ -639,6 +686,7 @@ async def process_message_job(
                 )
         except MlServiceError as exc:
             outcome.degradations.append(f"generation_unavailable:{exc.error_code}")
+            reply_text = GENERATION_UNAVAILABLE_REPLY
 
         # --- stage 11: dispatch ------------------------------------------
         if reply_text:

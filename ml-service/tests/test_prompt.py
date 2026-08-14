@@ -70,3 +70,37 @@ def test_retrieved_context_is_marked_as_data_not_instructions():
 def test_missing_context_is_stated_explicitly():
     message = build_user_message(GenerationRequest(user_text="halo"))
     assert "no knowledge base match above the similarity threshold" in message
+
+
+def test_trusted_domain_evidence_is_surfaced_in_the_url_verdicts_section():
+    # Part 9/11: the model must be able to cite *why* a domain is safe, not
+    # just the bare risk level.
+    message = build_user_message(
+        GenerationRequest(
+            user_text="!link https://www.pln.co.id",
+            category="PHISHING_LINK",
+            risk_level="LOW",
+            url_verdicts=[
+                {
+                    "url": "https://www.pln.co.id",
+                    "risk": "LOW",
+                    "reason": "no_provider_flagged;trusted_official_domain=PLN",
+                    "is_trusted": True,
+                    "trusted_source_name": "PLN",
+                }
+            ],
+        )
+    )
+    assert "trusted_source=PLN" in message
+
+
+def test_untrusted_url_states_no_trusted_source_explicitly():
+    message = build_user_message(
+        GenerationRequest(
+            user_text="!link https://contoh-domain-baru.com",
+            category="PHISHING_LINK",
+            risk_level="UNKNOWN",
+            url_verdicts=[{"url": "https://contoh-domain-baru.com", "risk": "UNKNOWN", "reason": "no_provider_available"}],
+        )
+    )
+    assert "trusted_source=none" in message

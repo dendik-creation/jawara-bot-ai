@@ -188,3 +188,23 @@ def extract_urls(text: str | None) -> list[ExtractedURL]:
 
 def has_shortlink(urls: list[ExtractedURL]) -> bool:
     return any(url.is_shortlink for url in urls)
+
+
+def normalize_domain(url: str | None) -> str | None:
+    """Exact hostname of a Knowledge Base source's `base_url`, for trusted-domain matching.
+
+    Strips scheme, a leading `www.`, and any path/query/fragment; keeps the
+    rest of the hostname exactly as given — including subdomains — because
+    trust matching (`app.services.knowledge.lookup_trusted_sources`) is
+    exact-host-or-subdomain-of, not eTLD+1 collapsing. Collapsing
+    `cekbansos.kemensos.go.id` down to `kemensos.go.id` here would make that
+    seeded source stop matching the exact URL it is trusted for.
+    """
+    if not url or not url.strip():
+        return None
+    candidate = url.strip()
+    full = candidate if "://" in candidate else f"http://{candidate}"
+    host = (urlsplit(full).hostname or "").lower()
+    if not host or "." not in host:
+        return None
+    return host[4:] if host.startswith("www.") else host

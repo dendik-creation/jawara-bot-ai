@@ -474,6 +474,7 @@ export type FactSource = {
   name: string
   base_url: string
   is_trusted: boolean
+  normalized_domain: string | null
   created_at: string | null
 }
 
@@ -1122,6 +1123,21 @@ export const api = {
       method: "POST",
       body: { name, base_url: baseUrl, is_trusted: isTrusted },
     }),
+  updateFactSource: (
+    id: number,
+    opts: { isTrusted?: boolean; reliabilityScore?: number; resync?: boolean },
+  ) =>
+    request<FactSource & { previous_reliability?: number; stale_in_qdrant?: number; resync?: unknown }>(
+      `/api/v1/knowledge/sources/${id}`,
+      {
+        method: "PATCH",
+        body: {
+          is_trusted: opts.isTrusted,
+          reliability_score: opts.reliabilityScore,
+          resync: opts.resync,
+        },
+      },
+    ),
 
   importFactItemsCsv: (file: File) => {
     const form = new FormData()

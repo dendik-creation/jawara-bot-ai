@@ -555,3 +555,49 @@ def test_create_fact_source_writes_audit_log(monkeypatch):
     assert response.json()["reliability_score"] == 0.95
     assert audit_mock.await_args.kwargs["action"] == "knowledge.source_created"
     assert audit_mock.await_args.kwargs["metadata"]["reliability_score"] == 0.95
+
+
+def test_create_fact_source_rejects_a_duplicate_domain(monkeypatch):
+    # Part 7's "prevent duplicate domains" — the service layer raises
+    # ValueError on the DB's unique-violation, the route turns it into 400
+    # rather than a bare 500.
+    monkeypatch.setattr(
+        "app.services.knowledge.create_fact_source",
+        AsyncMock(side_effect=ValueError("domain pln.co.id sudah terdaftar pada sumber lain")),
+    )
+
+    response = client.post(
+        "/api/v1/knowledge/sources",
+        json={"name": "PLN Duplikat", "base_url": "https://pln.co.id", "is_trusted": True},
+    )
+
+    assert response.status_code == 400
+    assert "pln.co.id" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["not a url", "ftp://pln.co.id", "javascript:alert(1)", "https://", ""],
+)
+def test_create_fact_source_rejects_an_invalid_base_url(base_url):
+    response = client.post(
+        "/api/v1/knowledge/sources",
+        json={"name": "Sumber Tidak Valid", "base_url": base_url, "is_trusted": True},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_fact_source_accepts_a_valid_http_url(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge.create_fact_source",
+        AsyncMock(return_value=_source(normalized_domain="pln.co.id")),
+    )
+    monkeypatch.setattr("app.api.v1.endpoints.knowledge.record_audit", AsyncMock())
+
+    response = client.post(
+        "/api/v1/knowledge/sources",
+        json={"name": "PLN", "base_url": "https://www.pln.co.id", "is_trusted": True},
+    )
+
+    assert response.status_code == 201

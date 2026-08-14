@@ -68,10 +68,22 @@ def _format_context(matches: list[dict[str, Any]]) -> str:
 def _format_url_verdicts(verdicts: list[dict[str, Any]]) -> str:
     if not verdicts:
         return "(no URL in this message)"
-    return "\n".join(
-        f"- {verdict.get('url', '')} → risk {verdict.get('risk', 'UNKNOWN')} ({verdict.get('reason', '')})"
-        for verdict in verdicts
-    )
+    lines = []
+    for verdict in verdicts:
+        # `trusted_source_name` is domain *recognition* evidence (task Part
+        # 9/11) — cite it in the explanation, but it is not a safety verdict
+        # of its own: `risk` still comes from the deterministic engine and
+        # the model must not treat "trusted" as a reason to change it.
+        trust = (
+            f"trusted_source={verdict['trusted_source_name']}"
+            if verdict.get("is_trusted") and verdict.get("trusted_source_name")
+            else "trusted_source=none"
+        )
+        lines.append(
+            f"- {verdict.get('url', '')} → risk {verdict.get('risk', 'UNKNOWN')} "
+            f"({trust}; {verdict.get('reason', '')})"
+        )
+    return "\n".join(lines)
 
 
 def build_user_message(request: GenerationRequest) -> str:

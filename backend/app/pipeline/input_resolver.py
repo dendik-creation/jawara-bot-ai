@@ -17,6 +17,7 @@ one place that decides "this counts as an image".
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from app.clients.waha_client import WahaClient
 from app.pipeline.media import ImageAttachment, image_attachment_of
@@ -49,13 +50,27 @@ async def resolve_quoted_message(
     chat_id: str,
     message_id: str,
     log_context: dict[str, object],
+    inline: dict[str, Any] | None = None,
 ) -> ResolvedQuote:
-    """Fetch the replied-to message and pull out its text and/or image.
+    """Pull out the replied-to message's text and/or image.
 
-    Preferred path: one `GET .../messages/{id}` call, same as a normal
-    webhook delivery, read for both text and an inline media reference
-    (`media.url` or `media.data`) — one round trip serves both, never two
-    downloads for what is one message (§22 of the reply-to-media task note).
+    Fastest path: `inline` is `payload["replyTo"]` straight off the webhook
+    that carries the `!cek`/`!link` command. Some WAHA builds (confirmed:
+    current WEBJS deployment) already inline the *entire* quoted message
+    there — `body`, `hasMedia`, `media.url` — not just an id pointer. When it
+    already has usable text or media, this returns it directly and never
+    calls WAHA again. That matters beyond latency: this deployment's
+    `GET .../messages/{id}` 500s unconditionally (observed in production —
+    every `!cek` on a reply-to-image failed with `quoted_message_unavailable`
+    until this inline path existed), so skipping it here is what makes the
+    command work at all, not just work faster.
+
+    Preferred fetch path (when `inline` has nothing usable — older WAHA
+    builds that send a bare pointer): one `GET .../messages/{id}` call, same
+    as a normal webhook delivery, read for both text and an inline media
+    reference (`media.url` or `media.data`) — one round trip serves both,
+    never two downloads for what is one message (§22 of the reply-to-media
+    task note).
 
     Fallback path: WAHA sometimes reports `hasMedia: true` without inlining
     a usable reference (no `media.url`, no `media.data` — engine/version
@@ -68,6 +83,22 @@ async def resolve_quoted_message(
         "jawara.input.resolve_started",
         extra={**log_context, "reply_message_id": message_id},
     )
+
+    if isinstance(inline, dict):
+        inline_text = _text_of(inline)
+        inline_image = image_attachment_of(inline)
+        if inline_text is not None or inline_image is not None:
+            logger.info(
+                "jawara.input.resolve_completed",
+                extra={
+                    **log_context,
+                    "reply_message_id": message_id,
+                    "has_text": bool(inline_text),
+                    "has_media": inline_image is not None,
+                    "resolution_source": "inline_reply_to",
+                },
+            )
+            return ResolvedQuote(text=inline_text, image=inline_image)
 
     data = await waha.get_message(session, chat_id, message_id)
     if data is None:

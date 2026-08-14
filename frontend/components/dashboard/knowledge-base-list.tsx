@@ -811,6 +811,7 @@ function SourcesPanel() {
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [refreshKey, setRefreshKey] = React.useState(0)
+  const [pendingSourceId, setPendingSourceId] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -853,11 +854,32 @@ function SourcesPanel() {
     }
   }
 
+  async function toggleTrusted(source: FactSource) {
+    setPendingSourceId(source.id)
+    setError(null)
+    try {
+      await api.updateFactSource(source.id, { isTrusted: !source.is_trusted, resync: false })
+      setRefreshKey((key) => key + 1)
+      toast.success(
+        source.is_trusted ? "Sumber tidak lagi menjadi domain resmi" : "Sumber diakui sebagai domain resmi",
+        { description: source.name },
+      )
+    } catch (caught) {
+      setError(caught instanceof GatewayError ? caught.message : "gagal memperbarui sumber")
+    } finally {
+      setPendingSourceId(null)
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Sumber Fakta</CardTitle>
-        <CardDescription>Direktori sumber yang dirujuk fact item — dipakai saat membuat fact baru.</CardDescription>
+        <CardDescription>
+          Direktori sumber yang dirujuk fact item, dan domain resmi yang dikenali saat pemeriksaan link (
+          <code>!link</code>). <strong>Terpercaya = Ya</strong> berarti domain sumber ini diakui sebagai domain resmi
+          — bukan jaminan setiap URL di bawahnya 100% aman, hanya bahwa domainnya dikenali sebagai sumber otoritatif.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {loading ? (
@@ -873,7 +895,11 @@ function SourcesPanel() {
                 <TableRow>
                   <TableHead>Nama</TableHead>
                   <TableHead>URL</TableHead>
+                  <TableHead>Domain</TableHead>
                   <TableHead>Terpercaya</TableHead>
+                  <TableHead className="w-32">
+                    <span className="sr-only">Kelola</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -881,10 +907,23 @@ function SourcesPanel() {
                   <TableRow key={source.id}>
                     <TableCell className="text-sm font-medium">{source.name}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{source.base_url}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {source.normalized_domain ?? "—"}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={source.is_trusted ? "low" : "unknown"}>
                         {source.is_trusted ? "Ya" : "Tidak"}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={pendingSourceId === source.id}
+                        onClick={() => toggleTrusted(source)}
+                      >
+                        {source.is_trusted ? "Cabut kepercayaan" : "Jadikan terpercaya"}
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

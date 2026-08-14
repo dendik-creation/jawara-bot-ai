@@ -125,6 +125,39 @@ def test_reply_to_another_member_does_not_trigger():
     assert decide(payload, GROUP, "setuju", BOT_IDS).should_reply is False
 
 
+def test_quoted_message_id_is_rebuilt_into_wahas_composite_shape():
+    """WAHA's `GET .../messages/{id}` 500s on the bare stanza id `replyTo.id`
+    carries by itself — it wants its own `{fromMe}_{chatId}_{stanzaId}`
+    shape, the same one every webhook envelope's own `id` field already
+    uses (production incident: reply-to-image `!cek` always usage-erroring,
+    `quoted_message_unavailable` on every attempt)."""
+    payload = group_message(replyTo={"id": "3EB0DAF7516034EE5BE090", "fromMe": True})
+    assert group_policy.quoted_message_id(payload, GROUP) == f"true_{GROUP}_3EB0DAF7516034EE5BE090"
+
+
+def test_quoted_message_id_appends_the_participant_when_present():
+    payload = group_message(
+        replyTo={"id": "3EB0DAF7516034EE5BE090", "fromMe": False, "participant": "99669027872892@lid"}
+    )
+    assert (
+        group_policy.quoted_message_id(payload, GROUP)
+        == f"false_{GROUP}_3EB0DAF7516034EE5BE090_99669027872892@lid"
+    )
+
+
+def test_quoted_message_id_falls_back_to_the_bare_stanza_without_from_me():
+    """No `fromMe` to build the composite id from — better the bare id
+    (some WAHA builds accept it) than nothing at all."""
+    payload = group_message(replyTo={"id": "msg_0", "participant": "6287712032005@c.us"})
+    assert group_policy.quoted_message_id(payload, GROUP) == "msg_0"
+
+
+def test_quoted_message_id_leaves_an_already_composite_id_alone():
+    already = f"true_{GROUP}_3EB0DAF7516034EE5BE090"
+    payload = group_message(replyTo={"id": already, "fromMe": True})
+    assert group_policy.quoted_message_id(payload, GROUP) == already
+
+
 def test_unknown_bot_identity_keeps_the_bot_quiet_in_groups():
     """A failed identity lookup must fail silent, never fail spammy."""
     payload = group_message(mentionedIds=["6287712032005@c.us"])

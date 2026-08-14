@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.pipeline.categories import RiskLevel
 from app.pipeline.url_extractor import extract_urls
 from app.pipeline.url_safety import scan_urls
+from app.services.knowledge import TrustedSource
 from tests.http_stub import FakeResponse, patch_httpx, raise_timeout
 
 MALICIOUS = "http://bansos-pemerintah-2026.com/klaim"
@@ -219,3 +220,133 @@ async def test_no_urls_returns_unknown_without_calling_providers():
     result = await scan_urls([], settings=settings_with())
     assert result.risk is RiskLevel.UNKNOWN
     assert result.urls == ()
+
+
+# --------------------------------------------------------------------------
+# Trusted Knowledge Base domains (`!link` false-positive fix, Parts 4/8/10/12)
+#
+# `trusted_lookup` is injected directly rather than going through a real
+# Postgres — `scan_urls`'s default (`app.services.knowledge.
+# lookup_trusted_sources`) is exercised separately in
+# `test_knowledge_trusted_sources.py`. What matters here is the precedence
+# rule in `_combine`, independent of how the trust signal was sourced.
+# --------------------------------------------------------------------------
+
+
+def _trusted_lookup(**domain_to_source: TrustedSource):
+    """Exact-or-subdomain match, mirroring `knowledge.lookup_trusted_sources`'s
+    own semantics — the point of these tests is `_combine`'s precedence
+    logic, not re-deriving domain matching."""
+
+    async def lookup(domains, settings):  # noqa: ANN001, ARG001 — matches TrustedLookup's shape
+        matched = {}
+        for domain in domains:
+            for trusted_domain, source in domain_to_source.items():
+                if domain == trusted_domain or domain.endswith(f".{trusted_domain}"):
+                    matched[domain] = source
+                    break
+        return matched
+
+    return lookup
+
+
+PLN = TrustedSource(id=1, name="PLN", normalized_domain="pln.co.id")
+
+
+async def test_trusted_domain_with_no_provider_evidence_is_low_not_high(stub_providers):
+    # Case 1 / Case 5: PLN, no confirmed threat anywhere — must not be HIGH,
+    # must not be HOAX-shaped either; it becomes LOW ("official, no threat
+    # evidence found"), never a bare guess. Both providers unavailable (not
+    # merely "clean"), so the pre-trust risk is genuinely UNKNOWN.
+    stub_providers(safe_browsing=FakeResponse(503), virustotal=FakeResponse(503))
+
+    result = await scan_urls(
+        extract_urls("https://www.pln.co.id"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(**{"pln.co.id": PLN}),
+    )
+
+    assert result.risk is RiskLevel.LOW
+    assert result.urls[0].is_trusted is True
+    assert result.urls[0].trusted_source_name == "PLN"
+    assert "trusted_official_domain" in result.urls[0].reason
+
+
+async def test_unknown_domain_with_no_kb_entry_and_no_reputation_stays_unknown(stub_providers):
+    # Case 2: nothing in the KB, nothing from the providers — UNKNOWN, not HIGH.
+    stub_providers(safe_browsing=FakeResponse(503), virustotal=FakeResponse(503))
+
+    result = await scan_urls(
+        extract_urls("https://contoh-domain-baru.com"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(),
+    )
+
+    assert result.risk is RiskLevel.UNKNOWN
+    assert result.urls[0].is_trusted is False
+
+
+async def test_subdomain_of_a_trusted_registrable_domain_is_recognised(stub_providers):
+    # Case 7: `rekrutmen.pln.co.id` belongs to the trusted `pln.co.id`.
+    stub_providers(safe_browsing=FakeResponse(503), virustotal=FakeResponse(503))
+
+    result = await scan_urls(
+        extract_urls("https://rekrutmen.pln.co.id/loker"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(**{"pln.co.id": PLN}),
+    )
+
+    assert result.urls[0].is_trusted is True
+    assert result.risk is RiskLevel.LOW
+
+
+async def test_lookalike_domain_is_not_trusted(stub_providers):
+    # Case 8: the text "pln.co.id" merely appears inside another domain —
+    # must not be trusted by substring matching.
+    stub_providers(safe_browsing=FakeResponse(503), virustotal=FakeResponse(503))
+
+    result = await scan_urls(
+        extract_urls("https://pln-co-id.example.com"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(**{"pln.co.id": PLN}),
+    )
+
+    assert result.urls[0].is_trusted is False
+    assert result.risk is RiskLevel.UNKNOWN
+
+
+async def test_confirmed_malicious_provider_result_overrides_trust(stub_providers):
+    # Case 9: a trusted domain is not a blank check — a provider that actually
+    # confirms a threat must still win. (Hypothetical: the site is compromised.)
+    stub_providers(
+        safe_browsing=FakeResponse(
+            200, {"matches": [{"threatType": "SOCIAL_ENGINEERING", "threat": {"url": "https://www.pln.co.id"}}]}
+        ),
+        virustotal=FakeResponse(404),
+    )
+
+    result = await scan_urls(
+        extract_urls("https://www.pln.co.id"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(**{"pln.co.id": PLN}),
+    )
+
+    assert result.risk is RiskLevel.HIGH
+    assert result.urls[0].is_trusted is True  # recognition and safety are reported separately
+
+
+async def test_trusted_domain_does_not_downgrade_a_medium_signal(stub_providers):
+    # Trust only fills in for UNKNOWN (no evidence). A provider that actually
+    # answered MEDIUM found *something* — trust must not silently launder it.
+    stub_providers(
+        safe_browsing=FakeResponse(200, {}),
+        virustotal=FakeResponse(200, {"data": {"attributes": {"last_analysis_stats": {"malicious": 1}}}}),
+    )
+
+    result = await scan_urls(
+        extract_urls("https://www.pln.co.id"),
+        settings=settings_with(),
+        trusted_lookup=_trusted_lookup(**{"pln.co.id": PLN}),
+    )
+
+    assert result.risk is RiskLevel.MEDIUM

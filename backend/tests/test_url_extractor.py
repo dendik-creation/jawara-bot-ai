@@ -1,4 +1,4 @@
-from app.pipeline.url_extractor import SHORTENER_DOMAINS, extract_urls, has_shortlink
+from app.pipeline.url_extractor import SHORTENER_DOMAINS, extract_urls, has_shortlink, normalize_domain
 
 
 def test_extracts_scheme_url_from_sentence():
@@ -66,3 +66,30 @@ def test_known_shorteners_are_recognised():
     for domain in ("bit.ly", "tinyurl.com", "s.id", "cutt.ly"):
         assert domain in SHORTENER_DOMAINS
         assert extract_urls(f"https://{domain}/abc")[0].is_shortlink
+
+
+# --------------------------------------------------------------------------
+# normalize_domain — Knowledge Base trusted-domain normalisation
+# --------------------------------------------------------------------------
+
+
+def test_normalize_domain_strips_scheme_www_and_path():
+    assert normalize_domain("https://www.pln.co.id") == "pln.co.id"
+    assert normalize_domain("http://pln.co.id/") == "pln.co.id"
+    assert normalize_domain("pln.co.id") == "pln.co.id"
+
+
+def test_normalize_domain_strips_query_and_fragment():
+    assert normalize_domain("https://pln.co.id/path?x=1#frag") == "pln.co.id"
+
+
+def test_normalize_domain_keeps_a_full_official_subdomain_intact():
+    # `cekbansos.kemensos.go.id` is the actual trusted source (seed data), not
+    # `kemensos.go.id` — normalisation must not collapse it to an eTLD+1.
+    assert normalize_domain("https://cekbansos.kemensos.go.id") == "cekbansos.kemensos.go.id"
+
+
+def test_normalize_domain_rejects_hostless_input():
+    assert normalize_domain("") is None
+    assert normalize_domain(None) is None
+    assert normalize_domain("not a url") is None

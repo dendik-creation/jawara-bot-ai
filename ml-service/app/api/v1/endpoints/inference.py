@@ -19,7 +19,7 @@ from app.core.errors import MlError
 from app.core.security import verify_internal_key
 from app.llm.prompt import GenerationRequest
 from app.llm.template_provider import TemplateProvider
-from app.llm.validator import validate_response
+from app.llm.validator import status_for_risk, validate_response
 from app.models import classifier as classifier_module
 from app.models.registry import registry
 from app.rag import claim as claim_module
@@ -223,6 +223,16 @@ async def generate(request: MlRequest) -> MlResponse:
     fallback = TemplateProvider()
     fallback_reason = ""
 
+    # The deterministic mapping is the source of truth (task Part 1): the LLM
+    # explains `risk_level`, it never chooses the status. `validate_response`
+    # rejects any reply whose status marker doesn't match this exactly, so a
+    # provider that answers "HIGH" for a computed UNKNOWN — or "LOW" for a
+    # computed HIGH — never reaches `dispatch`; it is discarded in favour of
+    # the deterministic composer below, same as any other contract violation.
+    expected_status = status_for_risk(generation.risk_level, category=generation.category)
+    llm_status = ""
+    status_mismatch = False
+
     with Timer() as timer:
         try:
             text = await provider.generate(generation)
@@ -234,14 +244,30 @@ async def generate(request: MlRequest) -> MlResponse:
             text = fallback.compose(generation)
             fallback_reason = exc.error_code
 
-        validated = validate_response(text)
+        validated = validate_response(text, expected_status=expected_status)
+        llm_status = validated.status
+        status_mismatch = "status_mismatch" in validated.violations
         if not validated.is_valid:
             logger.warning(
                 "generated reply failed the four-section contract, repairing",
                 extra={"request_id": request.request_id, "violations": list(validated.violations)},
             )
             fallback_reason = fallback_reason or f"contract:{','.join(validated.violations)}"
-            validated = validate_response(fallback.compose(generation))
+            validated = validate_response(fallback.compose(generation), expected_status=expected_status)
+
+        logger.info(
+            "url safety status check" if generation.category == "PHISHING_LINK" else "risk status check",
+            extra={
+                "request_id": request.request_id,
+                "category": generation.category,
+                "computed_risk": generation.risk_level,
+                "expected_status": expected_status,
+                "llm_status": llm_status,
+                "status_mismatch": status_mismatch,
+                "final_status": validated.status,
+                "url_verdicts": generation.url_verdicts,
+            },
+        )
 
     if not validated.is_valid:
         # The deterministic composer failing its own contract is a code bug, not

@@ -20,14 +20,14 @@ import re
 
 from app.llm.base import LlmProvider
 from app.llm.prompt import GenerationRequest
-from app.llm.validator import STATUS_HIGH, status_for_risk
+from app.llm.validator import status_for_risk
 
 # One official reference per category, used when the knowledge base match does
 # not carry its own source URL.
 DEFAULT_REFERENCES: dict[str, str] = {
     "HEALTH_HOAX": "https://kemkes.go.id/",
     "GENERAL_NEWS": "https://turnbackhoax.id/",
-    "PHISHING_LINK": "https://cekbansos.kemensos.go.id/",
+    "PHISHING_LINK": "https://patrolisiber.id/",
     "FINANCIAL_FRAUD": "https://cekrekening.id/",
     "FILE_APK": "https://patrolisiber.id/",
     "UNKNOWN": "https://turnbackhoax.id/",
@@ -87,7 +87,7 @@ class TemplateProvider(LlmProvider):
 
     def compose(self, request: GenerationRequest) -> str:
         category = (request.category or "UNKNOWN").upper()
-        status = status_for_risk(request.risk_level)
+        status = status_for_risk(request.risk_level, category=category)
 
         explanation_parts = [RISK_OPENING.get(request.risk_level.upper(), RISK_OPENING["UNKNOWN"])]
 
@@ -112,7 +112,7 @@ class TemplateProvider(LlmProvider):
         else:
             reference = DEFAULT_REFERENCES.get(category, DEFAULT_REFERENCES["UNKNOWN"])
 
-        title = FORWARD_TITLE_WARNING if status != status_for_risk("LOW") else FORWARD_TITLE_SAFE
+        title = FORWARD_TITLE_WARNING if status != status_for_risk("LOW", category=category) else FORWARD_TITLE_SAFE
         forward_body = self._forward_body(request, category, status)
 
         return (
@@ -148,7 +148,7 @@ class TemplateProvider(LlmProvider):
                 line = f"Mohon berhati-hati, kabar berikut dinyatakan hoaks oleh sumber resmi: {claim}"
             else:
                 line = f"Mohon berhati-hati, kabar berikut belum terbukti kebenarannya: {claim}"
-        elif status == STATUS_HIGH:
+        elif status == status_for_risk("HIGH", category=category):
             line = "Mohon berhati-hati, pesan yang beredar berikut terindikasi penipuan."
         else:
             line = "Mohon berhati-hati, pesan yang beredar berikut belum dapat dipastikan kebenarannya."

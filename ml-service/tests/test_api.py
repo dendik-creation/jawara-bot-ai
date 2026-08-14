@@ -244,6 +244,144 @@ def test_empty_user_text_is_rejected(client):
 
 
 # --------------------------------------------------------------------------
+# Deterministic status enforcement (`!link` false-positive fix, Part 1/12
+# Cases 3-4) — the LLM's own status marker must never reach the user when it
+# disagrees with the risk the URL-safety engine (or knowledge base) computed,
+# even when the rest of the reply is perfectly well-formed.
+# --------------------------------------------------------------------------
+
+
+def _four_section_reply(status_line: str) -> str:
+    return (
+        f"{status_line}\n\n"
+        "Bapak/Ibu, ini penjelasan singkat mengenai tautan tersebut.\n\n"
+        "Sumber Resmi:\nhttps://cekbansos.kemensos.go.id/\n\n"
+        "> *Pesan Penting untuk Keluarga:*\n"
+        "> Mohon berhati-hati ya. 🙏"
+    )
+
+
+class FixedStatusProvider(LlmProvider):
+    name = "fixed-status"
+    version = "test"
+
+    def __init__(self, status_line: str) -> None:
+        self._status_line = status_line
+
+    async def generate(self, request):
+        return _four_section_reply(self._status_line)
+
+
+def test_llm_cannot_upgrade_a_computed_unknown_to_a_dangerous_status(client, monkeypatch):
+    # Case 3: computed risk_level=UNKNOWN, LLM prints the HIGH-shaped URL
+    # marker anyway. The reply is otherwise perfectly well-formed — only the
+    # status line disagrees with the deterministic risk — so this proves
+    # `status_mismatch` specifically triggers the repair, not some other
+    # structural defect.
+    monkeypatch.setattr(registry, "llm", lambda *_: FixedStatusProvider("🔴 *BERBAHAYA*"))
+
+    body = client.post(
+        "/v1/generate",
+        json=envelope(
+            {
+                "user_text": "!link https://contoh-domain-baru.com",
+                "category": "PHISHING_LINK",
+                "risk_level": "UNKNOWN",
+                "url_verdicts": [{"url": "https://contoh-domain-baru.com", "risk": "UNKNOWN", "reason": "no_provider_available"}],
+            }
+        ),
+        headers=HEADERS,
+    ).json()
+
+    assert body["result"]["fallback_used"] is True
+    assert "status_mismatch" in body["result"]["fallback_reason"]
+    # UNKNOWN's own marker — never the HIGH one the LLM tried to print, and
+    # never rendered as if it were a confirmed hoax either.
+    assert body["result"]["sections"]["status"] == "⚪ *BELUM TERVERIFIKASI*"
+    assert "BERBAHAYA" not in body["result"]["message"]
+    assert "HOAKS" not in body["result"]["message"]
+
+
+def test_llm_cannot_downgrade_a_computed_high_risk_to_safe(client, monkeypatch):
+    # Case 4: computed risk_level=HIGH (a provider confirmed the threat), LLM
+    # prints the safe URL marker. HIGH must stand.
+    monkeypatch.setattr(registry, "llm", lambda *_: FixedStatusProvider("🟢 *AMAN*"))
+
+    body = client.post(
+        "/v1/generate",
+        json=envelope(
+            {
+                "user_text": "!link http://bansos-pemerintah-2026.com",
+                "category": "PHISHING_LINK",
+                "risk_level": "HIGH",
+                "url_verdicts": [
+                    {"url": "http://bansos-pemerintah-2026.com", "risk": "HIGH", "reason": "flagged_by=safe_browsing"}
+                ],
+            }
+        ),
+        headers=HEADERS,
+    ).json()
+
+    assert body["result"]["fallback_used"] is True
+    assert "status_mismatch" in body["result"]["fallback_reason"]
+    assert body["result"]["sections"]["status"] == "🔴 *BERBAHAYA*"
+
+
+def test_llm_status_matching_the_computed_risk_is_dispatched_unmodified(client, monkeypatch):
+    # The mirror case: agreement is not a violation, and the LLM's own text
+    # (not the deterministic composer's) reaches the user.
+    monkeypatch.setattr(registry, "llm", lambda *_: FixedStatusProvider("⚪ *BELUM TERVERIFIKASI*"))
+
+    body = client.post(
+        "/v1/generate",
+        json=envelope({"user_text": "!link https://contoh-baru.com", "category": "PHISHING_LINK", "risk_level": "UNKNOWN"}),
+        headers=HEADERS,
+    ).json()
+
+    assert body["result"]["fallback_used"] is False
+    assert body["result"]["sections"]["status"] == "⚪ *BELUM TERVERIFIKASI*"
+
+
+def test_trusted_domain_evidence_reaches_the_prompt_payload(client, monkeypatch):
+    # Part 9: the model must be able to see *why* — not just the bare risk.
+    captured: dict[str, object] = {}
+
+    class RecordingProvider(LlmProvider):
+        name = "recording"
+        version = "test"
+
+        async def generate(self, request):
+            captured["url_verdicts"] = request.url_verdicts
+            return _four_section_reply("🟢 *AMAN*")
+
+    monkeypatch.setattr(registry, "llm", lambda *_: RecordingProvider())
+
+    client.post(
+        "/v1/generate",
+        json=envelope(
+            {
+                "user_text": "!link https://www.pln.co.id",
+                "category": "PHISHING_LINK",
+                "risk_level": "LOW",
+                "url_verdicts": [
+                    {
+                        "url": "https://www.pln.co.id",
+                        "risk": "LOW",
+                        "reason": "no_provider_flagged;trusted_official_domain=PLN",
+                        "is_trusted": True,
+                        "trusted_source_name": "PLN",
+                    }
+                ],
+            }
+        ),
+        headers=HEADERS,
+    )
+
+    assert captured["url_verdicts"][0]["is_trusted"] is True
+    assert captured["url_verdicts"][0]["trusted_source_name"] == "PLN"
+
+
+# --------------------------------------------------------------------------
 # Classification: train, evaluate, classify
 # --------------------------------------------------------------------------
 

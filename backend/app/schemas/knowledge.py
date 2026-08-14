@@ -7,8 +7,9 @@ Policies' `condition`, whose required shape depends on a runtime value).
 """
 
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 FactCategory = Literal["HEALTH_HOAX", "FINANCIAL_FRAUD", "GENERAL_NEWS", "PHISHING_LINK", "FILE_APK"]
 Verdict = Literal["HOAX", "FACT", "MISLEADING", "UNVERIFIED"]
@@ -43,6 +44,14 @@ class FactSourceCreateRequest(BaseModel):
     # Omitted means the column default (0.80) — an unscored source sits just
     # below one an operator has explicitly vouched for.
     reliability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_must_have_a_hostname(cls, value: str) -> str:
+        parsed = urlsplit(value if "://" in value else f"http://{value}")
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or "." not in parsed.hostname:
+            raise ValueError("base_url harus berupa URL http(s) dengan domain yang valid")
+        return value
 
 
 class FactSourceUpdateRequest(BaseModel):

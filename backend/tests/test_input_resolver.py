@@ -35,6 +35,48 @@ async def test_quoted_message_unavailable_degrades():
     assert len(waha.calls) == 1
 
 
+async def test_inline_reply_to_resolves_without_calling_waha_at_all():
+    """Production incident: `payload["replyTo"]` on this WAHA build already
+    carries the full quoted message (`body`, `media.url`), not just an id
+    pointer — and `GET .../messages/{id}` 500s unconditionally on this
+    deployment regardless of id shape. Using the inline data directly is
+    what makes `!cek` on a reply-to-image work at all here, not just faster."""
+    waha = FakeWahaMessages(plain={"body": "should never be fetched"})
+    inline = {
+        "id": "3EB0DAF7516034EE5BE090",
+        "participant": "99669027872892@lid",
+        "body": "apakah ini nyata",
+        "hasMedia": True,
+        "media": {
+            "url": "http://localhost:3000/api/files/x/y.jpeg",
+            "filename": None,
+            "mimetype": "image/jpeg",
+        },
+    }
+
+    result = await resolve_quoted_message(waha, "default", CHAT_ID, MESSAGE_ID, {}, inline=inline)
+
+    assert result.text == "apakah ini nyata"
+    assert result.image is not None
+    assert result.image.url == "http://localhost:3000/api/files/x/y.jpeg"
+    assert result.degraded == ()
+    assert waha.calls == []  # never touched WahaClient.get_message
+
+
+async def test_inline_reply_to_with_nothing_usable_falls_back_to_fetching():
+    """A bare pointer (`replyTo` with only `id`/`participant`, the older-WAHA
+    shape the existing tests below already cover) must still fall back to
+    the fetch path — inline is an optimisation/workaround, not a
+    replacement for messages that genuinely need it."""
+    waha = FakeWahaMessages(plain={"body": "fetched text", "hasMedia": False})
+    inline = {"id": "msg_0", "participant": "6287712032005@c.us"}
+
+    result = await resolve_quoted_message(waha, "default", CHAT_ID, MESSAGE_ID, {}, inline=inline)
+
+    assert result.text == "fetched text"
+    assert len(waha.calls) == 1
+
+
 async def test_quoted_text_only_resolves_without_a_second_call():
     waha = FakeWahaMessages(plain={"body": "Air rebusan daun kitolod menyembuhkan katarak", "hasMedia": False})
 

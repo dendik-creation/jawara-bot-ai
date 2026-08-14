@@ -20,7 +20,7 @@ end-to-end target. Neither provider failing can fail this function.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Awaitable, Callable, Sequence
 
 from redis.asyncio import Redis
 
@@ -31,8 +31,11 @@ from app.core.cache import JsonCache
 from app.core.config import Settings, get_settings
 from app.pipeline.categories import RiskLevel, worst_risk
 from app.pipeline.url_extractor import ExtractedURL
+from app.services.knowledge import TrustedSource, lookup_trusted_sources
 
 logger = logging.getLogger("app.pipeline.url_safety")
+
+TrustedLookup = Callable[[Sequence[str], Settings], Awaitable[dict[str, TrustedSource]]]
 
 CACHE_PREFIX_SAFE_BROWSING = "urlscan:safe_browsing"
 CACHE_PREFIX_VIRUSTOTAL = "urlscan:virustotal"
@@ -48,6 +51,14 @@ class UrlRisk:
     risk: RiskLevel
     providers: tuple[ProviderVerdict, ...] = ()
     reason: str = ""
+    # Set when `domain` matches a `fact_sources` row with `is_trusted = TRUE`
+    # (Knowledge Base "Sumber Fakta" — see `app.services.knowledge`). This is a
+    # domain-recognition signal, not a safety guarantee: it can only pull an
+    # otherwise-unknown verdict up to LOW, never suppress a HIGH a provider
+    # actually flagged (`_apply_trust` below).
+    is_trusted: bool = False
+    trusted_source_id: int | None = None
+    trusted_source_name: str | None = None
 
     @property
     def degraded(self) -> bool:
@@ -61,6 +72,8 @@ class UrlRisk:
             "is_shortlink": self.is_shortlink,
             "risk": self.risk.value,
             "reason": self.reason,
+            "is_trusted": self.is_trusted,
+            "trusted_source_name": self.trusted_source_name,
             "providers": [verdict.as_dict() for verdict in self.providers],
         }
 
@@ -84,7 +97,7 @@ class UrlScanResult:
         }
 
 
-def _combine(url: ExtractedURL, verdicts: Sequence[ProviderVerdict]) -> UrlRisk:
+def _combine(url: ExtractedURL, verdicts: Sequence[ProviderVerdict], trusted: TrustedSource | None = None) -> UrlRisk:
     answered = [verdict for verdict in verdicts if verdict.available]
 
     if answered:
@@ -103,6 +116,17 @@ def _combine(url: ExtractedURL, verdicts: Sequence[ProviderVerdict]) -> UrlRisk:
         risk = RiskLevel.MEDIUM
         reason = f"{reason};ip_literal_host"
 
+    # Trust precedence (Part 10 of the false-positive fix task): a confirmed
+    # threat — HIGH or MEDIUM from an actual provider answer, or the
+    # shortlink/IP-literal caution above — always stands; an official site can
+    # in principle be compromised, so recognition never suppresses evidence.
+    # Trust can only turn "no evidence either way" (UNKNOWN) into LOW. A
+    # provider that *answered* LOW already agrees, so there is nothing to
+    # override there either — this is strictly the UNKNOWN -> LOW case.
+    if trusted is not None and risk is RiskLevel.UNKNOWN:
+        risk = RiskLevel.LOW
+        reason = f"{reason};trusted_official_domain={trusted.name}"
+
     return UrlRisk(
         url=url.url,
         domain=url.domain,
@@ -110,6 +134,9 @@ def _combine(url: ExtractedURL, verdicts: Sequence[ProviderVerdict]) -> UrlRisk:
         risk=risk,
         providers=tuple(verdicts),
         reason=reason,
+        is_trusted=trusted is not None,
+        trusted_source_id=trusted.id if trusted else None,
+        trusted_source_name=trusted.name if trusted else None,
     )
 
 
@@ -117,8 +144,15 @@ async def scan_urls(
     urls: Sequence[ExtractedURL],
     redis: Redis | None = None,
     settings: Settings | None = None,
+    trusted_lookup: TrustedLookup | None = None,
+    request_id: str | None = None,
 ) -> UrlScanResult:
-    """Scan up to `URL_SCAN_MAX_URLS` URLs with both providers. Never raises."""
+    """Scan up to `URL_SCAN_MAX_URLS` URLs with both providers. Never raises.
+
+    `trusted_lookup` defaults to the real Knowledge Base query
+    (`app.services.knowledge.lookup_trusted_sources`); tests inject a stub so
+    they never need a live Postgres to exercise provider-only behaviour.
+    """
     settings = settings or get_settings()
     if not urls:
         return UrlScanResult(risk=RiskLevel.UNKNOWN)
@@ -129,14 +163,19 @@ async def scan_urls(
 
     safe_browsing = SafeBrowsingClient(settings, JsonCache(redis, CACHE_PREFIX_SAFE_BROWSING))
     virustotal = VirusTotalClient(settings, JsonCache(redis, CACHE_PREFIX_VIRUSTOTAL))
+    lookup = trusted_lookup or lookup_trusted_sources
 
-    sb_verdicts, vt_verdicts = await asyncio.gather(
-        safe_browsing.check_urls(targets),
-        virustotal.check_urls(targets),
+    (sb_verdicts, vt_verdicts), trusted_map = await asyncio.gather(
+        asyncio.gather(
+            safe_browsing.check_urls(targets),
+            virustotal.check_urls(targets),
+        ),
+        lookup([url.domain for url in checked], settings),
     )
 
     combined = tuple(
-        _combine(url, (sb_verdicts[index], vt_verdicts[index])) for index, url in enumerate(checked)
+        _combine(url, (sb_verdicts[index], vt_verdicts[index]), trusted_map.get(url.domain))
+        for index, url in enumerate(checked)
     )
     overall = worst_risk(*[item.risk for item in combined])
     degraded = all(item.degraded for item in combined)
@@ -153,6 +192,25 @@ async def scan_urls(
         logger.info(
             "url scan degraded, no provider verdict available",
             extra={"url_count": len(combined), "signals": signals},
+        )
+
+    # One line per URL, deliberately verbose: this is the log a false
+    # positive gets diagnosed from (task §15) — "computed_risk=LOW but
+    # final_status=HIGH" points straight at the LLM layer, not this one.
+    for item in combined:
+        logger.info(
+            "url safety evaluated",
+            extra={
+                "request_id": request_id,
+                "url": item.url,
+                "domain": item.domain,
+                "trusted_source_found": item.is_trusted,
+                "trusted_source_id": item.trusted_source_id,
+                "trusted_source_name": item.trusted_source_name,
+                "provider_results": {verdict.provider: verdict.risk.value for verdict in item.providers},
+                "computed_risk": item.risk.value,
+                "reason": item.reason,
+            },
         )
 
     return UrlScanResult(

@@ -9,7 +9,14 @@ import pytest
 
 from app.llm.prompt import GenerationRequest
 from app.llm.template_provider import TemplateProvider
-from app.llm.validator import STATUS_HIGH, STATUS_SAFE, validate_response
+from app.llm.validator import (
+    STATUS_HIGH,
+    STATUS_SAFE,
+    URL_STATUS_HIGH,
+    URL_STATUS_LOW,
+    URL_STATUS_UNKNOWN,
+    validate_response,
+)
 
 composer = TemplateProvider()
 
@@ -133,3 +140,43 @@ def test_unverified_claim_says_so_instead_of_inventing_a_verdict():
 async def test_generate_delegates_to_compose():
     request_ = FEW_SHOT[0][1]
     assert await composer.generate(request_) == composer.compose(request_)
+
+
+# --------------------------------------------------------------------------
+# Category-aware status vocabulary (`!link` false-positive fix) — the
+# deterministic composer is also the repair path `/generate` falls back to,
+# so it must produce URL-safety markers for PHISHING_LINK too.
+# --------------------------------------------------------------------------
+
+
+def test_phishing_link_fallback_uses_the_url_safety_marker_not_hoax():
+    reply = composer.compose(
+        GenerationRequest(
+            user_text="!link https://contoh-domain-baru.com",
+            category="PHISHING_LINK",
+            risk_level="UNKNOWN",
+        )
+    )
+    assert reply.startswith(URL_STATUS_UNKNOWN)
+    assert "HOAKS" not in reply
+    assert validate_response(reply, expected_status=URL_STATUS_UNKNOWN).is_valid
+
+
+def test_phishing_link_high_uses_berbahaya_not_hoaks_bahaya_tinggi():
+    reply = composer.compose(FEW_SHOT[3][1])  # phishing link, risk_level=HIGH
+    assert reply.startswith(URL_STATUS_HIGH)
+    assert "HOAKS" not in reply
+    assert "terindikasi penipuan" in reply  # HIGH forward-block wording still fires
+
+
+def test_phishing_link_low_uses_url_safe_marker():
+    reply = composer.compose(
+        GenerationRequest(user_text="!link https://www.pln.co.id", category="PHISHING_LINK", risk_level="LOW")
+    )
+    assert reply.startswith(URL_STATUS_LOW)
+
+
+def test_non_phishing_categories_are_unaffected_by_the_url_vocabulary():
+    # Regression guard: only PHISHING_LINK's wording changed.
+    assert composer.compose(FEW_SHOT[0][1]).startswith(STATUS_HIGH)
+    assert composer.compose(FEW_SHOT[4][1]).startswith(STATUS_SAFE)

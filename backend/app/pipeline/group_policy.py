@@ -73,6 +73,11 @@ def _data_of(payload: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def data_keys_of(payload: dict[str, Any]) -> list[str]:
+    """Key names only (never values) of `payload["_data"]`, for diagnostic logging."""
+    return sorted(_data_of(payload).keys())
+
+
 def sender_of(payload: dict[str, Any], chat_id: str | None) -> str | None:
     """Who actually typed the message.
 
@@ -97,21 +102,63 @@ def mentioned_jids(payload: dict[str, Any]) -> list[str]:
     return [jid for jid in (_jid_text(item) for item in raw) if jid]
 
 
-def quoted_message_id(payload: dict[str, Any]) -> str | None:
-    """Id of the message this one replies to, if any."""
+def quoted_message_id(payload: dict[str, Any], chat_id: str | None = None) -> str | None:
+    """Id of the message this one replies to, if any — in the shape WAHA's
+    own message-lookup endpoint actually expects back.
+
+    `WahaClient.get_message()` (`GET .../chats/{chatId}/messages/{messageId}`)
+    wants WAHA's own composite id — `{fromMe}_{chatId}_{stanzaId}[_{participant}]`,
+    the same shape every webhook envelope's own top-level `id` already comes
+    in — not the bare WhatsApp stanza id `replyTo.id`/`quotedStanzaID` carries
+    by itself. Confirmed in production: `!cek` on a real WhatsApp reply always
+    resolved `has_reply: true` with a correctly-extracted bare stanza id, but
+    the follow-up `GET .../messages/{id}` 500'd on every attempt and the
+    command fell through to a usage error, never a "no reply" one. When the
+    quote's own `fromMe` is available (and a `chat_id` from the caller), this
+    reconstructs the composite id; otherwise it falls back to the bare
+    stanza id exactly as before, so a WAHA build/engine that already sends a
+    directly-usable id is unaffected.
+    """
     data = _data_of(payload)
     reply_to = payload.get("replyTo")
+
+    stanza: str | None = None
+    from_me: bool | None = None
+    participant: str | None = None
+
     if isinstance(reply_to, dict):
-        candidate = _jid_text(reply_to.get("id")) or reply_to.get("id")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    if isinstance(reply_to, str) and reply_to:
-        return reply_to
-    for key in ("quotedStanzaID", "quotedMsgId"):
-        candidate = data.get(key)
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
+        raw_id = reply_to.get("id")
+        stanza = _jid_text(raw_id) or (raw_id if isinstance(raw_id, str) else None)
+        if isinstance(reply_to.get("fromMe"), bool):
+            from_me = reply_to["fromMe"]
+        participant = _jid_text(reply_to.get("participant")) or _jid_text(reply_to.get("from")) or None
+    elif isinstance(reply_to, str) and reply_to:
+        stanza = reply_to
+
+    if stanza is None:
+        for key in ("quotedStanzaID", "quotedMsgId"):
+            candidate = data.get(key)
+            if isinstance(candidate, str) and candidate:
+                stanza = candidate
+                break
+        if participant is None:
+            participant = _jid_text(data.get("quotedParticipant")) or None
+
+    if not stanza:
+        return None
+
+    # Some WAHA builds already inline the composite id here (it carries the
+    # chat's own `@…` and an underscore) — nothing to reconstruct.
+    if "@" in stanza and "_" in stanza:
+        return stanza
+
+    if chat_id and from_me is not None:
+        composite = f"{'true' if from_me else 'false'}_{chat_id}_{stanza}"
+        if participant:
+            composite += f"_{participant}"
+        return composite
+
+    return stanza
 
 
 def _quoted_author(payload: dict[str, Any]) -> str | None:
@@ -161,7 +208,7 @@ def decide(
     group it then stays **silent** rather than replying to everything — the
     failure mode of a broken lookup must be quiet, not spam.
     """
-    quoted_id = quoted_message_id(payload)
+    quoted_id = quoted_message_id(payload, chat_id)
 
     if not is_group_chat(chat_id):
         return GroupDecision(

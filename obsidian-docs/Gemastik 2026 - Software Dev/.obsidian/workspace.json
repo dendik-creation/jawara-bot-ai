@@ -11,14 +11,10 @@
             "id": "8449f3eaff4c56e3",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "01_Overview/02_Value_Proposition.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "02_Value_Proposition"
+              "title": "New tab"
             }
           }
         ]
@@ -83,7 +79,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 401.5
+    "width": 379.5
   },
   "right": {
     "id": "5f4fa52d01388772",
@@ -188,29 +184,33 @@
       "obsidian-kanban:Create new board": false
     }
   },
-  "active": "8449f3eaff4c56e3",
+  "active": "7a08c22e4a7d2bcc",
   "lastOpenFiles": [
-    "04_AI_and_ML/01_LLM_System_Prompt.md.tmp.22088.9df2b2fd82d1",
-    "04_AI_and_ML/07_Model_Registry_and_Deployment.md.tmp.7232.52730d98f49b",
-    "04_AI_and_ML/06_Model_Evaluation.md.tmp.7232.f3f3bab1b252",
-    "04_AI_and_ML/05_Training_Jobs.md.tmp.7232.ae3adaeea519",
-    "04_AI_and_ML/01_LLM_System_Prompt.md.tmp.21812.f7d111f8afb2",
-    "01_Overview/03_Pitching_Narrative.md",
-    "01_Overview/04_How_it_Works.md",
+    "01_Overview/06_General_Diagram.md.tmp.21836.87f6ca7def9d",
+    "01_Overview/06_General_Diagram.md.tmp.21836.39c0218b317f",
     "01_Overview/05_Product_Scope_and_Roadmap.md",
+    "01_Overview/06_General_Diagram.md",
+    "01_Overview/04_How_it_Works.md",
+    "01_Overview/06_General_Diagram.md.tmp.21836.e550fc15e67d",
+    "01_Overview/06_General_Diagram.md.tmp.21836.d11e36669f52",
+    "01_Overview/06_General_Diagram.md.tmp.21836.86c160b8871b",
+    "01_Overview/06_General_Diagram.md.tmp.21836.1bf0b9e18f47",
+    "01_Overview/06_General_Diagram.md.tmp.21836.359f1abf3131",
+    "01_Overview/06_General_Diagram.md.tmp.21836.bb38703defe3",
+    "01_Overview/06_General_Diagram.md.tmp.21836.15023eb84ffd",
+    "01_Overview/06_General_Diagram.md.tmp.21836.dd7fd08ad2e5",
+    "01_Overview/06_General_Diagram.md.tmp.21836.ac7630e83636",
+    "01_Overview/03_Pitching_Narrative.md",
+    "01_Overview/02_Value_Proposition.md",
+    "01_Overview/01_Problem_Statement.md",
+    "10_Diagrams/01_General_Diagram.md",
     "07_How_to_Run/03_How_To_Train_AI.md",
-    "07_How_to_Run/03_How_To_Train_AI.md.tmp.12828.0816cb8da515",
-    "07_How_to_Run/03_How_To_Train_AI.md.tmp.12828.f73e290f37b8",
-    "07_How_to_Run/03_How_To_Train_AI.md.tmp.12828.df1758320f4e",
     "08_Dashboard/02_Command_Center.md",
     "08_Dashboard/04_Message_Inspection.md",
     "08_Dashboard/06_WhatsApp_Management.md",
     "08_Dashboard/05_Incident_Management.md",
     "08_Dashboard/03_Threat_Monitoring.md",
     "08_Dashboard/01_Control_Panel_Overview.md",
-    "06_Tasks/Task_Note/Open_Decisions_Carried_Forward.md.tmp.22360.64ff41e342c8",
-    "08_Dashboard/02_Command_Center.md.tmp.22360.3550412ab86f",
-    "08_Dashboard/02_Command_Center.md.tmp.22360.273d4ede4986",
     "04_AI_and_ML/05_Training_Jobs.md",
     "04_AI_and_ML/04_Datasets_and_Operator_Feedback.md",
     "04_AI_and_ML/02_ML_Control_Center_Overview.md",
@@ -222,10 +222,6 @@
     "06_Tasks/Task_Note/00_Sprint_2_Completion_Notes.md",
     "06_Tasks/Task_Note/Implement_Operator_Auth.md",
     "04_AI_and_ML/07_Model_Registry_and_Deployment.md",
-    "04_AI_and_ML/08_Continuous_Improvement_Loop.md",
-    "06_Tasks/Task_Detail/Implement Celery Workers.md",
-    "02_Architecture/04_ML_Service.md",
-    "07_How_to_Run/01_Dev_Environtment.md",
     "Untitled.canvas"
   ]
 }

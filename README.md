@@ -72,3 +72,9 @@ Full guide, including dataset prep and the ≥80% accuracy workflow: [`03_How_To
 **Still undecided:** backend dependency toolchain (`uv` vs `pip`), live-activity transport, retention policy for plaintext message content, and the WAHA send timeout versus the 3-second end-to-end target. LLM provider is decided: Anthropic Claude Haiku, contract kept provider-agnostic.
 
 Details: feature scope and per-feature status in `obsidian-docs/.../01_Overview/05_Product_Scope_and_Roadmap.md`; Sprint 1 completion notes in `obsidian-docs/.../06_Tasks/Task_Note/`.
+
+## License
+
+JAWARA's own code is [MIT-licensed](./LICENSE). Third-party dependency, container
+image, and API license inventory — including flagged items like Redis's post-7.4
+relicensing — lives in [`docs/licenses/THIRD_PARTY_LICENSES.md`](./docs/licenses/THIRD_PARTY_LICENSES.md).
